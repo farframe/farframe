@@ -1,0 +1,7 @@
+XCODE_VERSION=26.6
+XCODE_BUILD=17F113
+SDK_VERSION=26.5
+MINIMUM_OS_VERSION=26.0
+CMAKE_VERSION=4.2.1
+NINJA_VERSION=1.13.2
+VARIANTS=xros-arm64,xrsimulator-arm64,iphoneos-arm64,iphonesimulator-arm64,macos-arm64,macos-x86_64

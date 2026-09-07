@@ -1,0 +1,25 @@
+diff --git a/lib/src/regist.c b/lib/src/regist.c
+--- a/lib/src/regist.c
++++ b/lib/src/regist.c
+@@ -616,6 +616,21 @@ static chiaki_socket_t regist_request_connect(ChiakiRegist *regist, const struct
+ 		return CHIAKI_INVALID_SOCKET;
+ 	}
+ 
++#ifdef SO_NOSIGPIPE
++	int no_sigpipe = 1;
++	if(setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe)) < 0)
++	{
++		int errsv = errno;
++#ifdef _WIN32
++		CHIAKI_LOGE(regist->log, "Regist failed to disable SIGPIPE: %u", WSAGetLastError());
++#else
++		CHIAKI_LOGE(regist->log, "Regist failed to disable SIGPIPE: %s", strerror(errsv));
++#endif
++		CHIAKI_SOCKET_CLOSE(sock);
++		return CHIAKI_INVALID_SOCKET;
++	}
++#endif
++
+ 	int r = connect(sock, addr, addr_len);
+ 	if(r < 0)
+ 	{

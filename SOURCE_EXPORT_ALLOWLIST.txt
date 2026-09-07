@@ -1,0 +1,25 @@
+# farframe-public-source-allowlist-v2
+#
+# One repository-relative file or directory prefix per line. Wildcards,
+# absolute paths, parent traversal, overlapping entries, and private/generated
+# path classes are rejected by export-public-source.sh.
+#
+# This is the cross-device corresponding-source candidate. Exact privacy
+# exclusions live in export-denylist.txt. Presence here is necessary, not
+# sufficient, for publication: the exporter also runs content/path audits.
+.gitignore
+LICENSE
+README.md
+SECURITY.md
+Code/RemotePlay/Apps
+Code/RemotePlay/Packages/RemotePlayCore/Package.swift
+Code/RemotePlay/Packages/RemotePlayCore/Sources
+Code/RemotePlay/Packages/RemotePlayCore/Tests
+Code/RemotePlay/Native/README.md
+Code/RemotePlay/Native/Manifest
+Code/RemotePlay/Native/Patches
+Code/RemotePlay/Native/Scripts
+Code/RemotePlay/Native/CMake
+Code/RemotePlay/Native/Sources
+Code/RemotePlay/Native/Tests
+Code/RemotePlay/project.yml

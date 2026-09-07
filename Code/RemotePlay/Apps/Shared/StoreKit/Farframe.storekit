@@ -1,0 +1,83 @@
+{
+  "identifier" : "farframe-universal-local-v1",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "0.00",
+      "familyShareable" : false,
+      "internalID" : "farframe-trial-3day-v1",
+      "localizations" : [
+        {
+          "description" : "Three days of full Connect and Remote Play access. Does not renew or charge automatically.",
+          "displayName" : "3-Day Trial",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "Farframe.vision.trial.3day",
+      "referenceName" : "Farframe 3-Day Trial",
+      "type" : "NonConsumable"
+    },
+    {
+      "displayPrice" : "14.99",
+      "familyShareable" : true,
+      "internalID" : "farframe-lifetime-v1",
+      "localizations" : [
+        {
+          "description" : "One purchase unlocks Connect and Remote Play across supported Farframe apps. No subscription or recurring charge.",
+          "displayName" : "Lifetime Unlock",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "Farframe.Vision.Lifetime",
+      "referenceName" : "Farframe Lifetime Unlock",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_applicationInternalID" : "farframe-universal-local",
+    "_failTransactionsEnabled" : false,
+    "_locale" : "en_US",
+    "_storefront" : "USA",
+    "_storeKitErrors" : [
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Load Products"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Purchase"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Verification"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "App Store Sync"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Subscription Status"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "App Transaction"
+      }
+    ]
+  },
+  "subscriptionGroups" : [
+
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

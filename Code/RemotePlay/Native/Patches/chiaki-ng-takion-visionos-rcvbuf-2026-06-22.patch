@@ -1,0 +1,71 @@
+diff --git a/lib/src/takion.c b/lib/src/takion.c
+index f57f9ffc..8a7e3aea 100644
+--- a/lib/src/takion.c
++++ b/lib/src/takion.c
+@@ -17,0 +18,3 @@
++#include <TargetConditionals.h>
++// Only include CoreServices for macOS (Gestalt API), not iOS/visionOS
++#if TARGET_OS_OSX && !TARGET_OS_MACCATALYST
+@@ -18,0 +22,2 @@
++#define CHIAKI_HAVE_GESTALT 1
++#endif
+@@ -38,0 +44 @@
++#define TAKION_SOCKET_RCVBUF (4 * 1024 * 1024)
+@@ -178,0 +185 @@ static ChiakiErrorCode takion_read_extra_sock_messages(ChiakiTakion *takion);
++static ChiakiErrorCode takion_set_socket_receive_buffer(ChiakiTakion *takion);
+@@ -236,0 +244 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_connect(ChiakiTakion *takion, Chiaki
++	int r = 0;
+@@ -247,3 +255,2 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_connect(ChiakiTakion *takion, Chiaki
+-		const int rcvbuf_val = takion->a_rwnd;
+-		int r = setsockopt(takion->sock, SOL_SOCKET, SO_RCVBUF, (const CHIAKI_SOCKET_BUF_TYPE)&rcvbuf_val, sizeof(rcvbuf_val));
+-		if(r < 0)
++		err = takion_set_socket_receive_buffer(takion);
++		if(err != CHIAKI_ERR_SUCCESS)
+@@ -251,2 +258 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_connect(ChiakiTakion *takion, Chiaki
+-			CHIAKI_LOGE(takion->log, "Takion failed to setsockopt SO_RCVBUF: " CHIAKI_SOCKET_ERROR_FMT, CHIAKI_SOCKET_ERROR_VALUE);
+-			ret = CHIAKI_ERR_NETWORK;
++			ret = err;
+@@ -256 +262 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_connect(ChiakiTakion *takion, Chiaki
+-#if defined(__APPLE__)
++#if defined(CHIAKI_HAVE_GESTALT)
+@@ -335,3 +341,2 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_connect(ChiakiTakion *takion, Chiaki
+-		const int rcvbuf_val = takion->a_rwnd;
+-		int r = setsockopt(takion->sock, SOL_SOCKET, SO_RCVBUF, (const CHIAKI_SOCKET_BUF_TYPE)&rcvbuf_val, sizeof(rcvbuf_val));
+-		if(r < 0)
++		err = takion_set_socket_receive_buffer(takion);
++		if(err != CHIAKI_ERR_SUCCESS)
+@@ -339,2 +344 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_connect(ChiakiTakion *takion, Chiaki
+-			CHIAKI_LOGE(takion->log, "Takion failed to setsockopt SO_RCVBUF: " CHIAKI_SOCKET_ERROR_FMT, CHIAKI_SOCKET_ERROR_VALUE);
+-			ret = CHIAKI_ERR_NETWORK;
++			ret = err;
+@@ -345 +349 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_connect(ChiakiTakion *takion, Chiaki
+-#if defined(__APPLE__)
++#if defined(CHIAKI_HAVE_GESTALT)
+@@ -447,0 +452,23 @@ error_gkcrypt_local_mutex:
++static ChiakiErrorCode takion_set_socket_receive_buffer(ChiakiTakion *takion)
++{
++	const int rcvbuf_val = TAKION_SOCKET_RCVBUF;
++	int r = setsockopt(takion->sock, SOL_SOCKET, SO_RCVBUF, (const CHIAKI_SOCKET_BUF_TYPE)&rcvbuf_val, sizeof(rcvbuf_val));
++	if(r < 0)
++	{
++		CHIAKI_LOGE(takion->log, "Takion failed to setsockopt SO_RCVBUF: " CHIAKI_SOCKET_ERROR_FMT, CHIAKI_SOCKET_ERROR_VALUE);
++		return CHIAKI_ERR_NETWORK;
++	}
++
++	int actual_rcvbuf = 0;
++	socklen_t actual_rcvbuf_size = sizeof(actual_rcvbuf);
++	r = getsockopt(takion->sock, SOL_SOCKET, SO_RCVBUF, (CHIAKI_SOCKET_BUF_TYPE)&actual_rcvbuf, &actual_rcvbuf_size);
++	if(r < 0)
++	{
++		CHIAKI_LOGW(takion->log, "Takion could not read SO_RCVBUF after setting it: " CHIAKI_SOCKET_ERROR_FMT, CHIAKI_SOCKET_ERROR_VALUE);
++		return CHIAKI_ERR_SUCCESS;
++	}
++
++	CHIAKI_LOGI(takion->log, "Takion socket receive buffer requested %d bytes, actual %d bytes", rcvbuf_val, actual_rcvbuf);
++	return CHIAKI_ERR_SUCCESS;
++}
++
+@@ -1718 +1745 @@ static ChiakiErrorCode takion_read_extra_sock_messages(ChiakiTakion *takion)
+-}
+\ No newline at end of file
++}

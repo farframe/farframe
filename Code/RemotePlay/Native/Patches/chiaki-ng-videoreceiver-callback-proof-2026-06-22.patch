@@ -1,0 +1,92 @@
+diff --git a/lib/src/videoreceiver.c b/lib/src/videoreceiver.c
+index a09ce49f..c9f9b584 100644
+--- a/lib/src/videoreceiver.c
++++ b/lib/src/videoreceiver.c
+@@ -4,6 +4,14 @@
+ #include <chiaki/session.h>
+ 
+ #include <string.h>
++#ifdef __APPLE__
++#include <TargetConditionals.h>
++#endif
++
++#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
++#define PSPLAY_VISIONOS_VIDEO_PACKET_LOG_LIMIT 20
++#define PSPLAY_VISIONOS_FRAME_CALLBACK_LOG_LIMIT 8
++#endif
+ 
+ static ChiakiErrorCode chiaki_video_receiver_flush_frame(ChiakiVideoReceiver *video_receiver);
+ 
+@@ -83,6 +91,26 @@ CHIAKI_EXPORT void chiaki_video_receiver_stream_info(ChiakiVideoReceiver *video_
+ 
+ CHIAKI_EXPORT void chiaki_video_receiver_av_packet(ChiakiVideoReceiver *video_receiver, ChiakiTakionAVPacket *packet)
+ {
++#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
++	static unsigned int video_packet_logs = 0;
++	if(video_packet_logs < PSPLAY_VISIONOS_VIDEO_PACKET_LOG_LIMIT)
++	{
++		video_packet_logs++;
++		CHIAKI_LOGI(video_receiver->log,
++				"visionOS video receiver proof: AV packet #%u sess=%p frame=%u unit=%u total=%u fec=%u profile=%u data=%zu cb=%p user=%p",
++				video_packet_logs,
++				(void *)video_receiver->session,
++				(unsigned int)packet->frame_index,
++				(unsigned int)packet->unit_index,
++				(unsigned int)packet->units_in_frame_total,
++				(unsigned int)packet->units_in_frame_fec,
++				(unsigned int)packet->adaptive_stream_index,
++				packet->data_size,
++				(void *)video_receiver->session->video_sample_cb,
++				video_receiver->session->video_sample_cb_user);
++	}
++#endif
++
+ 	// old frame?
+ 	ChiakiSeqNum16 frame_index = packet->frame_index;
+ 	ChiakiErrorCode err = CHIAKI_ERR_SUCCESS;
+@@ -107,8 +135,21 @@ CHIAKI_EXPORT void chiaki_video_receiver_av_packet(ChiakiVideoReceiver *video_re
+ 
+ 		ChiakiVideoProfile *profile = video_receiver->profiles + video_receiver->profile_cur;
+ 		CHIAKI_LOGI(video_receiver->log, "Switched to profile %d, resolution: %ux%u", video_receiver->profile_cur, profile->width, profile->height);
++#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
++		CHIAKI_LOGI(video_receiver->log,
++				"visionOS video receiver proof: profile header callback gate sess=%p header=%zu cb=%p user=%p",
++				(void *)video_receiver->session,
++				profile->header_sz,
++				(void *)video_receiver->session->video_sample_cb,
++				video_receiver->session->video_sample_cb_user);
++#endif
+ 		if(video_receiver->session->video_sample_cb)
++		{
+ 			video_receiver->session->video_sample_cb(profile->header, profile->header_sz, 0, false, video_receiver->session->video_sample_cb_user);
++#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
++			CHIAKI_LOGI(video_receiver->log, "visionOS video receiver proof: profile header callback returned");
++#endif
++		}
+ 		if(!chiaki_bitstream_header(&video_receiver->bitstream, profile->header, profile->header_sz))
+ 			CHIAKI_LOGW(video_receiver->log, "Failed to parse video header");
+ 	}
+@@ -235,6 +276,23 @@ static ChiakiErrorCode chiaki_video_receiver_flush_frame(ChiakiVideoReceiver *vi
+ 
+ 	if(succ && video_receiver->session->video_sample_cb)
+ 	{
++#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
++		static unsigned int frame_callback_logs = 0;
++		if(frame_callback_logs < PSPLAY_VISIONOS_FRAME_CALLBACK_LOG_LIMIT)
++		{
++			frame_callback_logs++;
++			CHIAKI_LOGI(video_receiver->log,
++					"visionOS video receiver proof: completed frame callback #%u sess=%p frame=%d size=%zu lost=%d recovered=%u cb=%p user=%p",
++					frame_callback_logs,
++					(void *)video_receiver->session,
++					(int)video_receiver->frame_index_cur,
++					frame_size,
++					(int)video_receiver->frames_lost,
++					recovered ? 1 : 0,
++					(void *)video_receiver->session->video_sample_cb,
++					video_receiver->session->video_sample_cb_user);
++		}
++#endif
+ 		bool cb_succ = video_receiver->session->video_sample_cb(frame, frame_size, video_receiver->frames_lost, recovered, video_receiver->session->video_sample_cb_user);
+ 		video_receiver->frames_lost = 0;
+ 		if(!cb_succ)

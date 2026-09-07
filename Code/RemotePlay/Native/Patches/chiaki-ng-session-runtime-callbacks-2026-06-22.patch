@@ -1,0 +1,201 @@
+diff --git a/lib/include/chiaki/session.h b/lib/include/chiaki/session.h
+index fcf4c850..db20877e 100644
+--- a/lib/include/chiaki/session.h
++++ b/lib/include/chiaki/session.h
+@@ -287,6 +287,18 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_keyboard_set_text(ChiakiSession *se
+ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_keyboard_reject(ChiakiSession *session);
+ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_keyboard_accept(ChiakiSession *session);
+ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_go_home(ChiakiSession *session);
++CHIAKI_EXPORT void chiaki_session_set_callbacks_runtime(ChiakiSession *session,
++	ChiakiEventCallback event_cb, void *event_user,
++	ChiakiVideoSampleCallback video_cb, void *video_user,
++	ChiakiAudioSink *audio_sink,
++	ChiakiCtrlDisplaySink *display_sink);
++CHIAKI_EXPORT uint32_t chiaki_session_callback_mask_runtime(ChiakiSession *session);
++CHIAKI_EXPORT bool chiaki_session_probe_event_callback_runtime(ChiakiSession *session);
++CHIAKI_EXPORT bool chiaki_session_probe_empty_video_callback_runtime(ChiakiSession *session);
++CHIAKI_EXPORT size_t chiaki_session_runtime_size(void);
++CHIAKI_EXPORT size_t chiaki_session_runtime_offset_video_sample_cb(void);
++CHIAKI_EXPORT size_t chiaki_session_runtime_offset_audio_sink(void);
++CHIAKI_EXPORT size_t chiaki_session_runtime_offset_display_sink(void);
+ 
+ static inline void chiaki_session_set_event_cb(ChiakiSession *session, ChiakiEventCallback cb, void *user)
+ {
+diff --git a/lib/src/session.c b/lib/src/session.c
+index 3274b627..f6cb168e 100644
+--- a/lib/src/session.c
++++ b/lib/src/session.c
+@@ -11,6 +11,7 @@
+ #include <string.h>
+ #include <stdio.h>
+ #include <stdbool.h>
++#include <stddef.h>
+ #include <errno.h>
+ #include <assert.h>
+ 
+@@ -36,6 +37,12 @@
+ 
+ #define SESSION_EXPECT_CTRL_START_MS    10000
+ 
++#define PSPLAY_CALLBACK_EVENT			(1u << 0)
++#define PSPLAY_CALLBACK_VIDEO			(1u << 1)
++#define PSPLAY_CALLBACK_AUDIO_HEADER	(1u << 2)
++#define PSPLAY_CALLBACK_AUDIO_FRAME		(1u << 3)
++#define PSPLAY_CALLBACK_DISPLAY			(1u << 4)
++
+ static void *session_thread_func(void *arg);
+ static void regist_cb(ChiakiRegistEvent *event, void *user);
+ static ChiakiErrorCode session_thread_request_session(ChiakiSession *session, ChiakiTarget *target_out);
+@@ -310,6 +317,19 @@ CHIAKI_EXPORT void chiaki_session_fini(ChiakiSession *session)
+ 
+ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_start(ChiakiSession *session)
+ {
++#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
++	CHIAKI_LOGI(session->log,
++			"visionOS callback proof: session_start session=%p stream_session=%p cb=%p user=%p event=%p audio_header=%p display=%p offset=%zu size=%zu",
++			(void *)session,
++			(void *)session->stream_connection.session,
++			(void *)session->video_sample_cb,
++			session->video_sample_cb_user,
++			(void *)session->event_cb,
++			(void *)session->audio_sink.header_cb,
++			(void *)session->display_sink.cantdisplay_cb,
++			offsetof(ChiakiSession, video_sample_cb),
++			sizeof(ChiakiSession));
++#endif
+ 	ChiakiErrorCode err = chiaki_thread_create(&session->session_thread, session_thread_func, session);
+ 	if(err != CHIAKI_ERR_SUCCESS)
+ 		return err;
+@@ -317,6 +337,98 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_start(ChiakiSession *session)
+ 	return err;
+ }
+ 
++CHIAKI_EXPORT void chiaki_session_set_callbacks_runtime(ChiakiSession *session,
++	ChiakiEventCallback event_cb, void *event_user,
++	ChiakiVideoSampleCallback video_cb, void *video_user,
++	ChiakiAudioSink *audio_sink,
++	ChiakiCtrlDisplaySink *display_sink)
++{
++	if(!session)
++		return;
++
++	session->event_cb = event_cb;
++	session->event_cb_user = event_user;
++	session->video_sample_cb = video_cb;
++	session->video_sample_cb_user = video_user;
++	if(audio_sink)
++		session->audio_sink = *audio_sink;
++	if(display_sink)
++		session->display_sink = *display_sink;
++
++#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
++	CHIAKI_LOGI(session->log,
++			"visionOS callback proof: runtime install session=%p stream_session=%p cb=%p user=%p event=%p audio_header=%p display=%p offset=%zu size=%zu",
++			(void *)session,
++			(void *)session->stream_connection.session,
++			(void *)session->video_sample_cb,
++			session->video_sample_cb_user,
++			(void *)session->event_cb,
++			(void *)session->audio_sink.header_cb,
++			(void *)session->display_sink.cantdisplay_cb,
++			offsetof(ChiakiSession, video_sample_cb),
++			sizeof(ChiakiSession));
++#endif
++}
++
++CHIAKI_EXPORT uint32_t chiaki_session_callback_mask_runtime(ChiakiSession *session)
++{
++	if(!session)
++		return 0;
++
++	uint32_t mask = 0;
++	if(session->event_cb && session->event_cb_user)
++		mask |= PSPLAY_CALLBACK_EVENT;
++	if(session->video_sample_cb && session->video_sample_cb_user)
++		mask |= PSPLAY_CALLBACK_VIDEO;
++	if(session->audio_sink.header_cb && session->audio_sink.user)
++		mask |= PSPLAY_CALLBACK_AUDIO_HEADER;
++	if(session->audio_sink.frame_cb && session->audio_sink.user)
++		mask |= PSPLAY_CALLBACK_AUDIO_FRAME;
++	if(session->display_sink.cantdisplay_cb && session->display_sink.user)
++		mask |= PSPLAY_CALLBACK_DISPLAY;
++	return mask;
++}
++
++CHIAKI_EXPORT bool chiaki_session_probe_event_callback_runtime(ChiakiSession *session)
++{
++	if(!session || !session->event_cb)
++		return false;
++
++	ChiakiEvent event;
++	memset(&event, 0, sizeof(event));
++	event.type = CHIAKI_EVENT_PLAYER_INDEX;
++	event.player_index = 0;
++	session->event_cb(&event, session->event_cb_user);
++	return true;
++}
++
++CHIAKI_EXPORT bool chiaki_session_probe_empty_video_callback_runtime(ChiakiSession *session)
++{
++	if(!session || !session->video_sample_cb)
++		return false;
++	return session->video_sample_cb(NULL, 0, 0, false, session->video_sample_cb_user);
++}
++
++CHIAKI_EXPORT size_t chiaki_session_runtime_size(void)
++{
++	return sizeof(ChiakiSession);
++}
++
++CHIAKI_EXPORT size_t chiaki_session_runtime_offset_video_sample_cb(void)
++{
++	return offsetof(ChiakiSession, video_sample_cb);
++}
++
++CHIAKI_EXPORT size_t chiaki_session_runtime_offset_audio_sink(void)
++{
++	return offsetof(ChiakiSession, audio_sink);
++}
++
++CHIAKI_EXPORT size_t chiaki_session_runtime_offset_display_sink(void)
++{
++	return offsetof(ChiakiSession, display_sink);
++}
++
+ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_stop(ChiakiSession *session)
+ {
+ 	ChiakiErrorCode err = chiaki_mutex_lock(&session->state_mutex);
+diff --git a/lib/src/streamconnection.c b/lib/src/streamconnection.c
+index 3853b0fc..1fcf7d57 100644
+--- a/lib/src/streamconnection.c
++++ b/lib/src/streamconnection.c
+@@ -12,6 +12,9 @@
+ #include <string.h>
+ #include <inttypes.h>
+ #include <assert.h>
++#ifdef __APPLE__
++#include <TargetConditionals.h>
++#endif
+ #ifndef _WIN32
+ #include <unistd.h>
+ #include <sys/types.h>
+@@ -147,6 +150,19 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_stream_connection_run(ChiakiStreamConnectio
+ 	ChiakiSession *session = stream_connection->session;
+ 	ChiakiErrorCode err;
+ 
++#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
++	CHIAKI_LOGI(stream_connection->log,
++			"visionOS callback proof: stream run stream=%p session=%p stream_session=%p cb=%p user=%p event=%p audio_header=%p display=%p",
++			(void *)stream_connection,
++			(void *)session,
++			(void *)stream_connection->session,
++			(void *)session->video_sample_cb,
++			session->video_sample_cb_user,
++			(void *)session->event_cb,
++			(void *)session->audio_sink.header_cb,
++			(void *)session->display_sink.cantdisplay_cb);
++#endif
++
+ 	ChiakiTakionConnectInfo takion_info;
+ 	takion_info.log = stream_connection->log;
+ 	takion_info.disable_audio_video = stream_connection->session->connect_info.disable_audio_video;

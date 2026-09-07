@@ -1,0 +1,21 @@
+diff --git a/lib/src/session.c b/lib/src/session.c
+index ac8eb6a0..3274b627 100644
+--- a/lib/src/session.c
++++ b/lib/src/session.c
+@@ -16,0 +17,4 @@
++#ifdef __APPLE__
++#include <TargetConditionals.h>
++#endif
++
+@@ -629,0 +634 @@ ctrl_failed:
++	{
+@@ -630,0 +636,5 @@ ctrl_failed:
++#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
++		session->dontfrag = false;
++		CHIAKI_LOGI(session->log, "visionOS stream proof: disabling Don't Fragment for stream transport");
++#endif
++	}
+@@ -1172 +1182 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_go_home(ChiakiSession *session)
+-}
+\ No newline at end of file
++}

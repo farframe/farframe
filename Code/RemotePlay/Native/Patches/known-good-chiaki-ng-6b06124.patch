@@ -1,0 +1,623 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8ceadc0d..ce99027e 100755
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -55,9 +55,9 @@ set(CHIAKI_IS_SWITCH ${NSWITCH})
+ 
+ if(APPLE)
+ 	if(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "arm64")
+-		set(CMAKE_OSX_DEPLOYMENT_TARGET 13.0 CACHE STRING "Minimum OS X deployment version" FORCE)
++		#visionOS patch: #visionOS patch: #visionOS patch: #visionOS sim patch: #visionOS sim patch: #visionOS sim patch: #visionOS sim patch: #visionOS patch: #visionOS sim patch: set(CMAKE_OSX_DEPLOYMENT_TARGET 13.0 CACHE STRING "Minimum OS X deployment version" FORCE)
+ 	else()
+-		set(CMAKE_OSX_DEPLOYMENT_TARGET 12.0 CACHE STRING "Minimum OS X deployment version" FORCE)
++		#visionOS patch: #visionOS patch: #visionOS patch: #visionOS sim patch: #visionOS sim patch: #visionOS sim patch: #visionOS sim patch: #visionOS patch: #visionOS sim patch: set(CMAKE_OSX_DEPLOYMENT_TARGET 12.0 CACHE STRING "Minimum OS X deployment version" FORCE)
+ 	endif()
+ endif()
+ 
+diff --git a/lib/include/chiaki/ecdh.h b/lib/include/chiaki/ecdh.h
+index 018457fa..db44874a 100644
+--- a/lib/include/chiaki/ecdh.h
++++ b/lib/include/chiaki/ecdh.h
+@@ -13,7 +13,8 @@ extern "C" {
+ #endif
+ 
+ #ifdef CHIAKI_LIB_ENABLE_MBEDTLS
+-#include "mbedtls/ecdh.h"
++#include "mbedtls/ecp.h"
++#include "mbedtls/bignum.h"
+ #include "mbedtls/ctr_drbg.h"
+ #endif
+ 
+@@ -26,8 +27,12 @@ typedef struct chiaki_ecdh_t
+ // CHIAKI_LIB_ENABLE_MBEDTLS must be defined
+ // globally (whole project)
+ #ifdef CHIAKI_LIB_ENABLE_MBEDTLS
+-	// mbedtls ecdh context
+-	mbedtls_ecdh_context ctx;
++	// mbedtls 3.x compatible: store ECP objects separately
++	mbedtls_ecp_group grp;       // curve group
++	mbedtls_ecp_point Q;         // local public key
++	mbedtls_mpi d;               // local private key
++	mbedtls_ecp_point Qp;        // remote public key
++	mbedtls_mpi z;               // shared secret
+ 	// deterministic random bit generator
+ 	mbedtls_ctr_drbg_context drbg;
+ #else
+diff --git a/lib/include/chiaki/session.h b/lib/include/chiaki/session.h
+index fcf4c850..db20877e 100644
+--- a/lib/include/chiaki/session.h
++++ b/lib/include/chiaki/session.h
+@@ -287,6 +287,18 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_keyboard_set_text(ChiakiSession *se
+ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_keyboard_reject(ChiakiSession *session);
+ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_keyboard_accept(ChiakiSession *session);
+ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_go_home(ChiakiSession *session);
++CHIAKI_EXPORT void chiaki_session_set_callbacks_runtime(ChiakiSession *session,
++	ChiakiEventCallback event_cb, void *event_user,
++	ChiakiVideoSampleCallback video_cb, void *video_user,
++	ChiakiAudioSink *audio_sink,
++	ChiakiCtrlDisplaySink *display_sink);
++CHIAKI_EXPORT uint32_t chiaki_session_callback_mask_runtime(ChiakiSession *session);
++CHIAKI_EXPORT bool chiaki_session_probe_event_callback_runtime(ChiakiSession *session);
++CHIAKI_EXPORT bool chiaki_session_probe_empty_video_callback_runtime(ChiakiSession *session);
++CHIAKI_EXPORT size_t chiaki_session_runtime_size(void);
++CHIAKI_EXPORT size_t chiaki_session_runtime_offset_video_sample_cb(void);
++CHIAKI_EXPORT size_t chiaki_session_runtime_offset_audio_sink(void);
++CHIAKI_EXPORT size_t chiaki_session_runtime_offset_display_sink(void);
+ 
+ static inline void chiaki_session_set_event_cb(ChiakiSession *session, ChiakiEventCallback cb, void *user)
+ {
+diff --git a/lib/src/ecdh.c b/lib/src/ecdh.c
+index 3277b606..59b4a82c 100644
+--- a/lib/src/ecdh.c
++++ b/lib/src/ecdh.c
+@@ -7,6 +7,7 @@
+ #ifdef CHIAKI_LIB_ENABLE_MBEDTLS
+ #include "mbedtls/entropy.h"
+ #include "mbedtls/md.h"
++#include "mbedtls/ecdh.h"
+ #else
+ #include <openssl/evp.h>
+ #include <openssl/ec.h>
+@@ -33,10 +34,12 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_ecdh_init(ChiakiECDH *ecdh)
+ 	mbedtls_entropy_context entropy;
+ 	//init RNG Seed context
+ 	mbedtls_entropy_init(&entropy);
+-	// init local key
+-	//mbedtls_ecp_keypair_init(&ecdh->key_local);
+-	mbedtls_ecdh_init(&ecdh->ctx);
+-	// init ecdh group
++	// init ECP objects for mbedtls 3.x compatibility
++	mbedtls_ecp_group_init(&ecdh->grp);
++	mbedtls_ecp_point_init(&ecdh->Q);
++	mbedtls_mpi_init(&ecdh->d);
++	mbedtls_ecp_point_init(&ecdh->Qp);
++	mbedtls_mpi_init(&ecdh->z);
+ 	// keep rng context in ecdh for later reuse
+ 	mbedtls_ctr_drbg_init(&ecdh->drbg);
+ 
+@@ -45,10 +48,10 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_ecdh_init(ChiakiECDH *ecdh)
+ 		(const unsigned char *) pers, sizeof pers));
+ 
+ 	// build MBEDTLS_ECP_DP_SECP256K1 group
+-	CHECK(mbedtls_ecp_group_load(&ecdh->ctx.grp, MBEDTLS_ECP_DP_SECP256K1));
++	CHECK(mbedtls_ecp_group_load(&ecdh->grp, MBEDTLS_ECP_DP_SECP256K1));
+ 	// build key
+-	CHECK(mbedtls_ecdh_gen_public(&ecdh->ctx.grp, &ecdh->ctx.d,
+-		&ecdh->ctx.Q, mbedtls_ctr_drbg_random, &ecdh->drbg));
++	CHECK(mbedtls_ecdh_gen_public(&ecdh->grp, &ecdh->d,
++		&ecdh->Q, mbedtls_ctr_drbg_random, &ecdh->drbg));
+ 
+ 	// relese entropy ptr
+ 	mbedtls_entropy_free(&entropy);
+@@ -71,7 +74,12 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_ecdh_init(ChiakiECDH *ecdh)
+ CHIAKI_EXPORT void chiaki_ecdh_fini(ChiakiECDH *ecdh)
+ {
+ #ifdef CHIAKI_LIB_ENABLE_MBEDTLS
+-	mbedtls_ecdh_free(&ecdh->ctx);
++	// mbedtls 3.x: free individual ECP objects
++	mbedtls_ecp_group_free(&ecdh->grp);
++	mbedtls_ecp_point_free(&ecdh->Q);
++	mbedtls_mpi_free(&ecdh->d);
++	mbedtls_ecp_point_free(&ecdh->Qp);
++	mbedtls_mpi_free(&ecdh->z);
+ 	mbedtls_ctr_drbg_free(&ecdh->drbg);
+ #else
+ 	EC_KEY_free(ecdh->key_local);
+@@ -86,19 +94,19 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_ecdh_set_local_key(ChiakiECDH *ecdh, const
+ 	// Load keys from buffers (i.e: config file)
+ 	// TODO test
+ 
+-	// public
++	// public - mbedtls 3.x: use direct struct members
+ 	int r = 0;
+-	r = mbedtls_ecp_point_read_binary(&ecdh->ctx.grp, &ecdh->ctx.Q, public_key, public_key_size);
++	r = mbedtls_ecp_point_read_binary(&ecdh->grp, &ecdh->Q, public_key, public_key_size);
+ 	if(r != 0)
+ 		return CHIAKI_ERR_UNKNOWN;
+ 
+ 	// secret
+-	r = mbedtls_mpi_read_binary(&ecdh->ctx.d, private_key, private_key_size);
++	r = mbedtls_mpi_read_binary(&ecdh->d, private_key, private_key_size);
+ 	if(r != 0)
+ 		return CHIAKI_ERR_UNKNOWN;
+ 
+ 	// regen key
+-	r = mbedtls_ecdh_gen_public(&ecdh->ctx.grp, &ecdh->ctx.d, &ecdh->ctx.Q, mbedtls_ctr_drbg_random, &ecdh->drbg);
++	r = mbedtls_ecdh_gen_public(&ecdh->grp, &ecdh->d, &ecdh->Q, mbedtls_ctr_drbg_random, &ecdh->drbg);
+ 	if(r != 0)
+ 		return CHIAKI_ERR_UNKNOWN;
+ 
+@@ -155,7 +163,8 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_ecdh_get_local_pub_key(ChiakiECDH *ecdh, ui
+ 	}} while(0)
+ 	// extract pub key to build dh shared secret
+ 	// this key is sent to the remote server
+-	GOTO_ERROR(mbedtls_ecp_point_write_binary( &ecdh->ctx.grp, &ecdh->ctx.Q,
++	// mbedtls 3.x: use direct struct members
++	GOTO_ERROR(mbedtls_ecp_point_write_binary( &ecdh->grp, &ecdh->Q,
+ 		MBEDTLS_ECP_PF_UNCOMPRESSED, key_out_size, key_out, *key_out_size ));
+ 
+ 	// https://tls.mbed.org/module-level-design-hashing
+@@ -194,23 +203,24 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_ecdh_derive_secret(ChiakiECDH *ecdh, uint8_
+ 	//compute DH shared key
+ #ifdef CHIAKI_LIB_ENABLE_MBEDTLS
+ 	// https://github.com/ARMmbed/mbedtls/blob/development/programs/pkey/ecdh_curve25519.c#L151
++	// mbedtls 3.x: use direct struct members
+ #define GOTO_ERROR(err) do { \
+ 	if((err) !=0){ \
+ 		goto error;} \
+ 	} while(0)
+ 
+-	GOTO_ERROR(mbedtls_mpi_lset(&ecdh->ctx.Qp.Z, 1));
+-	// load Qp point form remote PK
+-	GOTO_ERROR(mbedtls_ecp_point_read_binary(&ecdh->ctx.grp,
+-		&ecdh->ctx.Qp, remote_key, remote_key_size));
++	// mbedtls 3.x: mbedtls_ecp_point_read_binary sets Z=1 internally
++	// load Qp point from remote PK
++	GOTO_ERROR(mbedtls_ecp_point_read_binary(&ecdh->grp,
++		&ecdh->Qp, remote_key, remote_key_size));
+ 
+ 	// build shared secret (diffie-hellman)
+-	GOTO_ERROR(mbedtls_ecdh_compute_shared(&ecdh->ctx.grp,
+-		&ecdh->ctx.z, &ecdh->ctx.Qp, &ecdh->ctx.d,
++	GOTO_ERROR(mbedtls_ecdh_compute_shared(&ecdh->grp,
++		&ecdh->z, &ecdh->Qp, &ecdh->d,
+ 		mbedtls_ctr_drbg_random, &ecdh->drbg));
+ 
+ 	// export shared secret to data buffer
+-	GOTO_ERROR(mbedtls_mpi_write_binary(&ecdh->ctx.z,
++	GOTO_ERROR(mbedtls_mpi_write_binary(&ecdh->z,
+ 		secret_out, CHIAKI_ECDH_SECRET_SIZE));
+ 
+ 	return CHIAKI_ERR_SUCCESS;
+diff --git a/lib/src/session.c b/lib/src/session.c
+index ac8eb6a0..f6cb168e 100644
+--- a/lib/src/session.c
++++ b/lib/src/session.c
+@@ -11,9 +11,14 @@
+ #include <string.h>
+ #include <stdio.h>
+ #include <stdbool.h>
++#include <stddef.h>
+ #include <errno.h>
+ #include <assert.h>
+ 
++#ifdef __APPLE__
++#include <TargetConditionals.h>
++#endif
++
+ #ifdef _WIN32
+ #include <winsock2.h>
+ #define strcasecmp _stricmp
+@@ -32,6 +37,12 @@
+ 
+ #define SESSION_EXPECT_CTRL_START_MS    10000
+ 
++#define PSPLAY_CALLBACK_EVENT			(1u << 0)
++#define PSPLAY_CALLBACK_VIDEO			(1u << 1)
++#define PSPLAY_CALLBACK_AUDIO_HEADER	(1u << 2)
++#define PSPLAY_CALLBACK_AUDIO_FRAME		(1u << 3)
++#define PSPLAY_CALLBACK_DISPLAY			(1u << 4)
++
+ static void *session_thread_func(void *arg);
+ static void regist_cb(ChiakiRegistEvent *event, void *user);
+ static ChiakiErrorCode session_thread_request_session(ChiakiSession *session, ChiakiTarget *target_out);
+@@ -304,6 +315,19 @@ CHIAKI_EXPORT void chiaki_session_fini(ChiakiSession *session)
+ 
+ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_start(ChiakiSession *session)
+ {
++#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
++	CHIAKI_LOGI(session->log,
++			"visionOS callback proof: session_start session=%p stream_session=%p cb=%p user=%p event=%p audio_header=%p display=%p offset=%zu size=%zu",
++			(void *)session,
++			(void *)session->stream_connection.session,
++			(void *)session->video_sample_cb,
++			session->video_sample_cb_user,
++			(void *)session->event_cb,
++			(void *)session->audio_sink.header_cb,
++			(void *)session->display_sink.cantdisplay_cb,
++			offsetof(ChiakiSession, video_sample_cb),
++			sizeof(ChiakiSession));
++#endif
+ 	ChiakiErrorCode err = chiaki_thread_create(&session->session_thread, session_thread_func, session);
+ 	if(err != CHIAKI_ERR_SUCCESS)
+ 		return err;
+@@ -311,6 +335,98 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_start(ChiakiSession *session)
+ 	return err;
+ }
+ 
++CHIAKI_EXPORT void chiaki_session_set_callbacks_runtime(ChiakiSession *session,
++	ChiakiEventCallback event_cb, void *event_user,
++	ChiakiVideoSampleCallback video_cb, void *video_user,
++	ChiakiAudioSink *audio_sink,
++	ChiakiCtrlDisplaySink *display_sink)
++{
++	if(!session)
++		return;
++
++	session->event_cb = event_cb;
++	session->event_cb_user = event_user;
++	session->video_sample_cb = video_cb;
++	session->video_sample_cb_user = video_user;
++	if(audio_sink)
++		session->audio_sink = *audio_sink;
++	if(display_sink)
++		session->display_sink = *display_sink;
++
++#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
++	CHIAKI_LOGI(session->log,
++			"visionOS callback proof: runtime install session=%p stream_session=%p cb=%p user=%p event=%p audio_header=%p display=%p offset=%zu size=%zu",
++			(void *)session,
++			(void *)session->stream_connection.session,
++			(void *)session->video_sample_cb,
++			session->video_sample_cb_user,
++			(void *)session->event_cb,
++			(void *)session->audio_sink.header_cb,
++			(void *)session->display_sink.cantdisplay_cb,
++			offsetof(ChiakiSession, video_sample_cb),
++			sizeof(ChiakiSession));
++#endif
++}
++
++CHIAKI_EXPORT uint32_t chiaki_session_callback_mask_runtime(ChiakiSession *session)
++{
++	if(!session)
++		return 0;
++
++	uint32_t mask = 0;
++	if(session->event_cb && session->event_cb_user)
++		mask |= PSPLAY_CALLBACK_EVENT;
++	if(session->video_sample_cb && session->video_sample_cb_user)
++		mask |= PSPLAY_CALLBACK_VIDEO;
++	if(session->audio_sink.header_cb && session->audio_sink.user)
++		mask |= PSPLAY_CALLBACK_AUDIO_HEADER;
++	if(session->audio_sink.frame_cb && session->audio_sink.user)
++		mask |= PSPLAY_CALLBACK_AUDIO_FRAME;
++	if(session->display_sink.cantdisplay_cb && session->display_sink.user)
++		mask |= PSPLAY_CALLBACK_DISPLAY;
++	return mask;
++}
++
++CHIAKI_EXPORT bool chiaki_session_probe_event_callback_runtime(ChiakiSession *session)
++{
++	if(!session || !session->event_cb)
++		return false;
++
++	ChiakiEvent event;
++	memset(&event, 0, sizeof(event));
++	event.type = CHIAKI_EVENT_PLAYER_INDEX;
++	event.player_index = 0;
++	session->event_cb(&event, session->event_cb_user);
++	return true;
++}
++
++CHIAKI_EXPORT bool chiaki_session_probe_empty_video_callback_runtime(ChiakiSession *session)
++{
++	if(!session || !session->video_sample_cb)
++		return false;
++	return session->video_sample_cb(NULL, 0, 0, false, session->video_sample_cb_user);
++}
++
++CHIAKI_EXPORT size_t chiaki_session_runtime_size(void)
++{
++	return sizeof(ChiakiSession);
++}
++
++CHIAKI_EXPORT size_t chiaki_session_runtime_offset_video_sample_cb(void)
++{
++	return offsetof(ChiakiSession, video_sample_cb);
++}
++
++CHIAKI_EXPORT size_t chiaki_session_runtime_offset_audio_sink(void)
++{
++	return offsetof(ChiakiSession, audio_sink);
++}
++
++CHIAKI_EXPORT size_t chiaki_session_runtime_offset_display_sink(void)
++{
++	return offsetof(ChiakiSession, display_sink);
++}
++
+ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_stop(ChiakiSession *session)
+ {
+ 	ChiakiErrorCode err = chiaki_mutex_lock(&session->state_mutex);
+@@ -627,7 +743,13 @@ ctrl_failed:
+ 	}
+ 
+ 	if(err == CHIAKI_ERR_SUCCESS)
++	{
+ 		CHIAKI_LOGI(session->log, "Senkusha completed successfully");
++#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
++		session->dontfrag = false;
++		CHIAKI_LOGI(session->log, "visionOS stream proof: disabling Don't Fragment for stream transport");
++#endif
++	}
+ 	else if(err == CHIAKI_ERR_CANCELED)
+ 		QUIT(quit_ctrl);
+ 	else
+@@ -1169,4 +1291,4 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_go_home(ChiakiSession *session)
+ 	ChiakiErrorCode err;
+ 	err = ctrl_message_go_home(&session->ctrl);
+ 	return err;
+-}
+\ No newline at end of file
++}
+diff --git a/lib/src/streamconnection.c b/lib/src/streamconnection.c
+index 3853b0fc..329e8056 100644
+--- a/lib/src/streamconnection.c
++++ b/lib/src/streamconnection.c
+@@ -12,6 +12,9 @@
+ #include <string.h>
+ #include <inttypes.h>
+ #include <assert.h>
++#ifdef __APPLE__
++#include <TargetConditionals.h>
++#endif
+ #ifndef _WIN32
+ #include <unistd.h>
+ #include <sys/types.h>
+@@ -147,6 +150,19 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_stream_connection_run(ChiakiStreamConnectio
+ 	ChiakiSession *session = stream_connection->session;
+ 	ChiakiErrorCode err;
+ 
++#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
++	CHIAKI_LOGI(stream_connection->log,
++			"visionOS callback proof: stream run stream=%p session=%p stream_session=%p cb=%p user=%p event=%p audio_header=%p display=%p",
++			(void *)stream_connection,
++			(void *)session,
++			(void *)stream_connection->session,
++			(void *)session->video_sample_cb,
++			session->video_sample_cb_user,
++			(void *)session->event_cb,
++			(void *)session->audio_sink.header_cb,
++			(void *)session->display_sink.cantdisplay_cb);
++#endif
++
+ 	ChiakiTakionConnectInfo takion_info;
+ 	takion_info.log = stream_connection->log;
+ 	takion_info.disable_audio_video = stream_connection->session->connect_info.disable_audio_video;
+@@ -1298,4 +1314,4 @@ CHIAKI_EXPORT ChiakiErrorCode stream_connection_send_idr_request(ChiakiStreamCon
+ 
+ 	CHIAKI_LOGI(stream_connection->log, "StreamConnection requesting IDR frame");
+ 	return chiaki_takion_send_message_data(&stream_connection->takion, 1, 2, buf, stream.bytes_written, NULL);
+-}
+\ No newline at end of file
++}
+diff --git a/lib/src/takion.c b/lib/src/takion.c
+index f57f9ffc..8a7e3aea 100644
+--- a/lib/src/takion.c
++++ b/lib/src/takion.c
+@@ -15,7 +15,12 @@
+ #include <assert.h>
+ 
+ #ifdef __APPLE__
++#include <TargetConditionals.h>
++// Only include CoreServices for macOS (Gestalt API), not iOS/visionOS
++#if TARGET_OS_OSX && !TARGET_OS_MACCATALYST
+ #include <CoreServices/CoreServices.h>
++#define CHIAKI_HAVE_GESTALT 1
++#endif
+ #endif
+ 
+ #ifdef _WIN32
+@@ -36,6 +41,7 @@
+ // VERY similar to SCTP, see RFC 4960
+ 
+ #define TAKION_A_RWND 0x19000
++#define TAKION_SOCKET_RCVBUF (4 * 1024 * 1024)
+ #define TAKION_OUTBOUND_STREAMS 0x64
+ #define TAKION_INBOUND_STREAMS 0x64
+ 
+@@ -176,6 +182,7 @@ static ChiakiErrorCode takion_recv_message_init_ack(ChiakiTakion *takion, Takion
+ static ChiakiErrorCode takion_recv_message_cookie_ack(ChiakiTakion *takion);
+ static void takion_handle_packet_av(ChiakiTakion *takion, uint8_t base_type, uint8_t *buf, size_t buf_size);
+ static ChiakiErrorCode takion_read_extra_sock_messages(ChiakiTakion *takion);
++static ChiakiErrorCode takion_set_socket_receive_buffer(ChiakiTakion *takion);
+ 
+ CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_connect(ChiakiTakion *takion, ChiakiTakionConnectInfo *info, chiaki_socket_t *sock)
+ {
+@@ -234,6 +241,7 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_connect(ChiakiTakion *takion, Chiaki
+ 		CHIAKI_LOGE(takion->log, "Takion failed to create stop pipe");
+ 		goto error_seq_num_local_mutex;
+ 	}
++	int r = 0;
+ 
+ 	if(sock)
+ 	{
+@@ -244,16 +252,14 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_connect(ChiakiTakion *takion, Chiaki
+ 			CHIAKI_LOGE(takion->log, "Takion had problem reading extra messages from socket using PSN Connection with error: " CHIAKI_SOCKET_ERROR_FMT, CHIAKI_SOCKET_ERROR_VALUE);
+ 			goto error_sock;
+ 		}
+-		const int rcvbuf_val = takion->a_rwnd;
+-		int r = setsockopt(takion->sock, SOL_SOCKET, SO_RCVBUF, (const CHIAKI_SOCKET_BUF_TYPE)&rcvbuf_val, sizeof(rcvbuf_val));
+-		if(r < 0)
++		err = takion_set_socket_receive_buffer(takion);
++		if(err != CHIAKI_ERR_SUCCESS)
+ 		{
+-			CHIAKI_LOGE(takion->log, "Takion failed to setsockopt SO_RCVBUF: " CHIAKI_SOCKET_ERROR_FMT, CHIAKI_SOCKET_ERROR_VALUE);
+-			ret = CHIAKI_ERR_NETWORK;
++			ret = err;
+ 			goto error_sock;
+ 		}
+ 
+-#if defined(__APPLE__)
++#if defined(CHIAKI_HAVE_GESTALT)
+ 		SInt32 majorVersion;
+ 		Gestalt(gestaltSystemVersionMajor, &majorVersion);
+ 		if(majorVersion < 11)
+@@ -332,17 +338,15 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_connect(ChiakiTakion *takion, Chiaki
+ 			ret = CHIAKI_ERR_NETWORK;
+ 			goto error_pipe;
+ 		}
+-		const int rcvbuf_val = takion->a_rwnd;
+-		int r = setsockopt(takion->sock, SOL_SOCKET, SO_RCVBUF, (const CHIAKI_SOCKET_BUF_TYPE)&rcvbuf_val, sizeof(rcvbuf_val));
+-		if(r < 0)
++		err = takion_set_socket_receive_buffer(takion);
++		if(err != CHIAKI_ERR_SUCCESS)
+ 		{
+-			CHIAKI_LOGE(takion->log, "Takion failed to setsockopt SO_RCVBUF: " CHIAKI_SOCKET_ERROR_FMT, CHIAKI_SOCKET_ERROR_VALUE);
+-			ret = CHIAKI_ERR_NETWORK;
++			ret = err;
+ 			goto error_sock;
+ 		}
+ 		if(info->ip_dontfrag)
+ 		{
+-#if defined(__APPLE__)
++#if defined(CHIAKI_HAVE_GESTALT)
+ 			SInt32 majorVersion;
+ 			Gestalt(gestaltSystemVersionMajor, &majorVersion);
+ 			if(majorVersion < 11)
+@@ -445,6 +449,29 @@ error_gkcrypt_local_mutex:
+ 	return ret;
+ }
+ 
++static ChiakiErrorCode takion_set_socket_receive_buffer(ChiakiTakion *takion)
++{
++	const int rcvbuf_val = TAKION_SOCKET_RCVBUF;
++	int r = setsockopt(takion->sock, SOL_SOCKET, SO_RCVBUF, (const CHIAKI_SOCKET_BUF_TYPE)&rcvbuf_val, sizeof(rcvbuf_val));
++	if(r < 0)
++	{
++		CHIAKI_LOGE(takion->log, "Takion failed to setsockopt SO_RCVBUF: " CHIAKI_SOCKET_ERROR_FMT, CHIAKI_SOCKET_ERROR_VALUE);
++		return CHIAKI_ERR_NETWORK;
++	}
++
++	int actual_rcvbuf = 0;
++	socklen_t actual_rcvbuf_size = sizeof(actual_rcvbuf);
++	r = getsockopt(takion->sock, SOL_SOCKET, SO_RCVBUF, (CHIAKI_SOCKET_BUF_TYPE)&actual_rcvbuf, &actual_rcvbuf_size);
++	if(r < 0)
++	{
++		CHIAKI_LOGW(takion->log, "Takion could not read SO_RCVBUF after setting it: " CHIAKI_SOCKET_ERROR_FMT, CHIAKI_SOCKET_ERROR_VALUE);
++		return CHIAKI_ERR_SUCCESS;
++	}
++
++	CHIAKI_LOGI(takion->log, "Takion socket receive buffer requested %d bytes, actual %d bytes", rcvbuf_val, actual_rcvbuf);
++	return CHIAKI_ERR_SUCCESS;
++}
++
+ CHIAKI_EXPORT void chiaki_takion_close(ChiakiTakion *takion)
+ {
+ 	chiaki_stop_pipe_stop(&takion->stop_pipe);
+@@ -1715,4 +1742,4 @@ static ChiakiErrorCode takion_read_extra_sock_messages(ChiakiTakion *takion)
+         if (len < 0)
+             return CHIAKI_ERR_NETWORK;
+ 	}
+-}
+\ No newline at end of file
++}
+diff --git a/lib/src/videoreceiver.c b/lib/src/videoreceiver.c
+index a09ce49f..a226ade6 100644
+--- a/lib/src/videoreceiver.c
++++ b/lib/src/videoreceiver.c
+@@ -4,6 +4,14 @@
+ #include <chiaki/session.h>
+ 
+ #include <string.h>
++#ifdef __APPLE__
++#include <TargetConditionals.h>
++#endif
++
++#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
++#define PSPLAY_VISIONOS_VIDEO_PACKET_LOG_LIMIT 20
++#define PSPLAY_VISIONOS_FRAME_CALLBACK_LOG_LIMIT 8
++#endif
+ 
+ static ChiakiErrorCode chiaki_video_receiver_flush_frame(ChiakiVideoReceiver *video_receiver);
+ 
+@@ -83,6 +91,26 @@ CHIAKI_EXPORT void chiaki_video_receiver_stream_info(ChiakiVideoReceiver *video_
+ 
+ CHIAKI_EXPORT void chiaki_video_receiver_av_packet(ChiakiVideoReceiver *video_receiver, ChiakiTakionAVPacket *packet)
+ {
++#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
++	static unsigned int video_packet_logs = 0;
++	if(video_packet_logs < PSPLAY_VISIONOS_VIDEO_PACKET_LOG_LIMIT)
++	{
++		video_packet_logs++;
++		CHIAKI_LOGI(video_receiver->log,
++				"visionOS video receiver proof: AV packet #%u sess=%p frame=%u unit=%u total=%u fec=%u profile=%u data=%zu cb=%p user=%p",
++				video_packet_logs,
++				(void *)video_receiver->session,
++				(unsigned int)packet->frame_index,
++				(unsigned int)packet->unit_index,
++				(unsigned int)packet->units_in_frame_total,
++				(unsigned int)packet->units_in_frame_fec,
++				(unsigned int)packet->adaptive_stream_index,
++				packet->data_size,
++				(void *)video_receiver->session->video_sample_cb,
++				video_receiver->session->video_sample_cb_user);
++	}
++#endif
++
+ 	// old frame?
+ 	ChiakiSeqNum16 frame_index = packet->frame_index;
+ 	ChiakiErrorCode err = CHIAKI_ERR_SUCCESS;
+@@ -107,8 +135,21 @@ CHIAKI_EXPORT void chiaki_video_receiver_av_packet(ChiakiVideoReceiver *video_re
+ 
+ 		ChiakiVideoProfile *profile = video_receiver->profiles + video_receiver->profile_cur;
+ 		CHIAKI_LOGI(video_receiver->log, "Switched to profile %d, resolution: %ux%u", video_receiver->profile_cur, profile->width, profile->height);
++#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
++		CHIAKI_LOGI(video_receiver->log,
++				"visionOS video receiver proof: profile header callback gate sess=%p header=%zu cb=%p user=%p",
++				(void *)video_receiver->session,
++				profile->header_sz,
++				(void *)video_receiver->session->video_sample_cb,
++				video_receiver->session->video_sample_cb_user);
++#endif
+ 		if(video_receiver->session->video_sample_cb)
++		{
+ 			video_receiver->session->video_sample_cb(profile->header, profile->header_sz, 0, false, video_receiver->session->video_sample_cb_user);
++#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
++			CHIAKI_LOGI(video_receiver->log, "visionOS video receiver proof: profile header callback returned");
++#endif
++		}
+ 		if(!chiaki_bitstream_header(&video_receiver->bitstream, profile->header, profile->header_sz))
+ 			CHIAKI_LOGW(video_receiver->log, "Failed to parse video header");
+ 	}
+@@ -235,6 +276,23 @@ static ChiakiErrorCode chiaki_video_receiver_flush_frame(ChiakiVideoReceiver *vi
+ 
+ 	if(succ && video_receiver->session->video_sample_cb)
+ 	{
++#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
++		static unsigned int frame_callback_logs = 0;
++		if(frame_callback_logs < PSPLAY_VISIONOS_FRAME_CALLBACK_LOG_LIMIT)
++		{
++			frame_callback_logs++;
++			CHIAKI_LOGI(video_receiver->log,
++					"visionOS video receiver proof: completed frame callback #%u sess=%p frame=%d size=%zu lost=%d recovered=%u cb=%p user=%p",
++					frame_callback_logs,
++					(void *)video_receiver->session,
++					(int)video_receiver->frame_index_cur,
++					frame_size,
++					(int)video_receiver->frames_lost,
++					recovered ? 1 : 0,
++					(void *)video_receiver->session->video_sample_cb,
++					video_receiver->session->video_sample_cb_user);
++		}
++#endif
+ 		bool cb_succ = video_receiver->session->video_sample_cb(frame, frame_size, video_receiver->frames_lost, recovered, video_receiver->session->video_sample_cb_user);
+ 		video_receiver->frames_lost = 0;
+ 		if(!cb_succ)
+diff --git a/third-party/curl b/third-party/curl
+--- a/third-party/curl
++++ b/third-party/curl
+@@ -1 +1 @@
+-Subproject commit b1ef0e1a01c0bb6ee5367bd9c186a603bde3615a
++Subproject commit b1ef0e1a01c0bb6ee5367bd9c186a603bde3615a-dirty

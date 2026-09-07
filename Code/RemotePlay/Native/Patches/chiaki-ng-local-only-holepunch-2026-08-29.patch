@@ -1,0 +1,169 @@
+diff --git a/lib/CMakeLists.txt b/lib/CMakeLists.txt
+--- a/lib/CMakeLists.txt
++++ b/lib/CMakeLists.txt
+@@ -85,10 +85,15 @@ set(SOURCE_FILES
+ 		src/opusencoder.c
+ 		src/orientation.c
+ 		src/bitstream.c
+-		src/remote/holepunch.c
+ 		src/remote/rudp.c
+ 		src/remote/rudpsendbuffer.c)
+ 
++if(CHIAKI_ENABLE_RUDP)
++	list(APPEND SOURCE_FILES src/remote/holepunch.c)
++else()
++	list(APPEND SOURCE_FILES src/remote/holepunch-disabled.c)
++endif()
++
+ if(CHIAKI_ENABLE_FFMPEG_DECODER)
+ 	list(APPEND HEADER_FILES include/chiaki/ffmpegdecoder.h)
+ 	list(APPEND SOURCE_FILES src/ffmpegdecoder.c)
+diff --git a/lib/src/remote/holepunch-disabled.c b/lib/src/remote/holepunch-disabled.c
+new file mode 100644
+--- /dev/null
++++ b/lib/src/remote/holepunch-disabled.c
+@@ -0,0 +1,144 @@
++// SPDX-License-Identifier: LicenseRef-AGPL-3.0-only-OpenSSL
++
++#ifndef _WIN32
++#include <arpa/inet.h>
++#endif
++
++#include <chiaki/remote/holepunch.h>
++
++#include <stddef.h>
++#include <stdlib.h>
++
++CHIAKI_EXPORT ChiakiErrorCode chiaki_holepunch_list_devices(
++	const char *psn_oauth2_token,
++	ChiakiHolepunchConsoleType console_type,
++	ChiakiHolepunchDeviceInfo **devices,
++	size_t *device_count,
++	ChiakiLog *log)
++{
++	(void)psn_oauth2_token;
++	(void)console_type;
++	(void)log;
++	if(devices)
++		*devices = NULL;
++	if(device_count)
++		*device_count = 0;
++	return CHIAKI_ERR_UNINITIALIZED;
++}
++
++CHIAKI_EXPORT void chiaki_holepunch_free_device_list(
++	ChiakiHolepunchDeviceInfo **devices)
++{
++	if(!devices)
++		return;
++	free(*devices);
++	*devices = NULL;
++}
++
++CHIAKI_EXPORT ChiakiHolepunchRegistInfo chiaki_get_regist_info(
++	ChiakiHolepunchSession session)
++{
++	(void)session;
++	ChiakiHolepunchRegistInfo info = { 0 };
++	return info;
++}
++
++CHIAKI_EXPORT void chiaki_get_ps_selected_addr(
++	ChiakiHolepunchSession session,
++	char *ps_ip)
++{
++	(void)session;
++	if(ps_ip)
++		ps_ip[0] = '\0';
++}
++
++CHIAKI_EXPORT uint16_t chiaki_get_ps_ctrl_port(
++	ChiakiHolepunchSession session)
++{
++	(void)session;
++	return 0;
++}
++
++CHIAKI_EXPORT chiaki_socket_t *chiaki_get_holepunch_sock(
++	ChiakiHolepunchSession session,
++	ChiakiHolepunchPortType type)
++{
++	(void)session;
++	(void)type;
++	return NULL;
++}
++
++CHIAKI_EXPORT ChiakiErrorCode chiaki_holepunch_generate_client_device_uid(
++	char *out,
++	size_t *out_size)
++{
++	if(out)
++		out[0] = '\0';
++	if(out_size)
++		*out_size = 0;
++	return CHIAKI_ERR_UNINITIALIZED;
++}
++
++CHIAKI_EXPORT ChiakiHolepunchSession chiaki_holepunch_session_init(
++	const char *psn_oauth2_token,
++	ChiakiLog *log)
++{
++	(void)psn_oauth2_token;
++	(void)log;
++	return NULL;
++}
++
++CHIAKI_EXPORT ChiakiErrorCode chiaki_holepunch_session_create(
++	ChiakiHolepunchSession session)
++{
++	(void)session;
++	return CHIAKI_ERR_UNINITIALIZED;
++}
++
++CHIAKI_EXPORT ChiakiErrorCode chiaki_holepunch_session_start(
++	ChiakiHolepunchSession session,
++	const uint8_t *console_uid,
++	ChiakiHolepunchConsoleType console_type)
++{
++	(void)session;
++	(void)console_uid;
++	(void)console_type;
++	return CHIAKI_ERR_UNINITIALIZED;
++}
++
++CHIAKI_EXPORT ChiakiErrorCode chiaki_holepunch_upnp_discover(
++	ChiakiHolepunchSession session)
++{
++	(void)session;
++	return CHIAKI_ERR_UNINITIALIZED;
++}
++
++CHIAKI_EXPORT ChiakiErrorCode holepunch_session_create_offer(
++	ChiakiHolepunchSession session)
++{
++	(void)session;
++	return CHIAKI_ERR_UNINITIALIZED;
++}
++
++CHIAKI_EXPORT ChiakiErrorCode chiaki_holepunch_session_punch_hole(
++	ChiakiHolepunchSession session,
++	ChiakiHolepunchPortType port_type)
++{
++	(void)session;
++	(void)port_type;
++	return CHIAKI_ERR_UNINITIALIZED;
++}
++
++CHIAKI_EXPORT void chiaki_holepunch_main_thread_cancel(
++	ChiakiHolepunchSession session,
++	bool stop_thread)
++{
++	(void)session;
++	(void)stop_thread;
++}
++
++CHIAKI_EXPORT void chiaki_holepunch_session_fini(
++	ChiakiHolepunchSession session)
++{
++	(void)session;
++}

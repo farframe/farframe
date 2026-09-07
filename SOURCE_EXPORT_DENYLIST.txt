@@ -1,0 +1,10 @@
+# farframe-public-source-denylist-v2
+#
+# Exact repository-relative files or directory prefixes selected by
+# export-allowlist.txt but intentionally omitted from the history-free public
+# candidate. Every entry must exist at the exported commit and overlap an
+# allowlisted prefix; stale or ineffective exclusions fail closed.
+#
+# Intentionally empty. Public tests use RFC 5737 documentation addresses and
+# construct hardware-address strings from explicit byte fixtures, so no
+# allowlisted source or behavioral test is currently withheld.

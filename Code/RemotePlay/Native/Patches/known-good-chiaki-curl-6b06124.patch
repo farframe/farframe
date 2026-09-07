@@ -1,0 +1,13 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c4ba74d9fb..b583abaa84 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -414,7 +414,7 @@ if(ENABLE_IPV6 AND NOT WIN32)
+     set(ENABLE_IPV6 OFF CACHE BOOL "Enable IPv6 support" FORCE)
+   endif()
+ 
+-  if(APPLE AND NOT ENABLE_ARES)
++  if(FALSE AND APPLE AND NOT ENABLE_ARES)
+     set(_use_core_foundation_and_core_services ON)
+ 
+     find_library(SYSTEMCONFIGURATION_FRAMEWORK "SystemConfiguration")

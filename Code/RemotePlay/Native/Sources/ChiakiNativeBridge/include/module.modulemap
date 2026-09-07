@@ -1,0 +1,4 @@
+module ChiakiNative {
+    header "RemotePlayChiakiBridge.h"
+    export *
+}
