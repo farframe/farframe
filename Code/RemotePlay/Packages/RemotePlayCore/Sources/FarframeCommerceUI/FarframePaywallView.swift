@@ -68,12 +68,12 @@ public struct FarframePaywallView: View {
                 FarframeBrandMark(size: 56)
                     .accessibilityHidden(true)
 
-                Text("Play everywhere.\nPay once.")
+                Text("Play at home.\nPay once.")
                     .font(.title2.bold())
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Text("Try three full days free before you decide.")
+            Text("Lifetime Unlock. No subscription.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -99,8 +99,8 @@ public struct FarframePaywallView: View {
     private var valueProposition: some View {
         VStack(spacing: 12) {
             valuePanel(
-                headline: "One purchase. Four platforms.",
-                detail: "Apple Vision Pro, Mac, iPad, and iPhone."
+                headline: "One Lifetime Unlock.",
+                detail: "Available now on visionOS. Working on iOS, iPadOS, and macOS."
             ) {
                 HStack(spacing: 22) {
                     ForEach(["vision.pro", "macbook", "ipad", "iphone"], id: \.self) { symbol in
@@ -154,7 +154,7 @@ public struct FarframePaywallView: View {
     /// worth knowing, none of which is said twice on this sheet any more.
     private var benefits: some View {
         VStack(alignment: .leading, spacing: 8) {
-            benefit("Touch controls on iPhone and iPad. Compatible controllers across devices.", symbol: "gamecontroller")
+            benefit("Play with a compatible controller.", symbol: "gamecontroller")
             benefit("No subscription. No recurring charge.", symbol: "infinity")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -355,7 +355,8 @@ public struct FarframePaywallView: View {
     #endif
 
     private var showsTrialOption: Bool {
-        switch accessStore.state {
+        guard accessStore.trialProduct != nil else { return false }
+        return switch accessStore.state {
         case .loading, .trialEligible:
             true
         case .trialActive, .trialExpired, .lifetimeUnlocked:

@@ -157,7 +157,7 @@ public final class FarframeAccessStore {
         case .loading:
             "Checking access"
         case .trialEligible:
-            "Trial available"
+            "Ready to unlock"
         case .trialActive:
             "3-Day Trial active"
         case .trialExpired:
@@ -174,7 +174,7 @@ public final class FarframeAccessStore {
         case .loading:
             "FARFRAME is checking your App Store purchases."
         case .trialEligible:
-            "Start one free 3-day trial for this Apple Account, or unlock FARFRAME for life."
+            "Choose Lifetime Unlock to connect and play. Restore Purchases if you already have access."
         case .trialActive(_, let expiresAt):
             "Full access until \(expiresAt.formatted(date: .abbreviated, time: .shortened))."
         case .trialExpired:

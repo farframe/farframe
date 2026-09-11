@@ -290,8 +290,8 @@ public enum StreamPlayStyle: String, CaseIterable, Identifiable, Sendable {
     case everything
     /// Reaction first. The only style that turns smooth motion off.
     case competitive
-    /// Survival. Named for the place rather than the symptom, because a person
-    /// knows they are in a hotel long before they know their Wi-Fi is bad.
+    /// Favors stream stability on a busy or weak network.
+    /// The persisted identifier remains unchanged for existing settings.
     case awayFromHome
 
     public var id: String { rawValue }
@@ -312,7 +312,7 @@ public enum StreamPlayStyle: String, CaseIterable, Identifiable, Sendable {
         case .story: "Story and RPG"
         case .everything: "A bit of everything"
         case .competitive: "Online multiplayer"
-        case .awayFromHome: "Away from home"
+        case .awayFromHome: "Busy network"
         }
     }
 
@@ -364,7 +364,7 @@ public enum StreamPlayStyle: String, CaseIterable, Identifiable, Sendable {
         case .story: "RPGs, adventures, anything with cutscenes and a lot of reading"
         case .everything: "A mixed library on ordinary home Wi-Fi"
         case .competitive: "Shooters, fighting games, anything ranked"
-        case .awayFromHome: "Hotel Wi-Fi, a phone hotspot, a friend's couch"
+        case .awayFromHome: "Shared home Wi-Fi or a weaker connection"
         }
     }
 

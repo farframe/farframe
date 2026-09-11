@@ -18,7 +18,7 @@ public struct FarframeBrandMark: View {
     }
 }
 
-/// The same supported-platform promise on Home and the purchase surface.
+/// Current platform availability on Home and the purchase surface.
 public struct FarframeSupportedDevices: View {
     public init() {}
 
@@ -33,7 +33,7 @@ public struct FarframeSupportedDevices: View {
             }
             .foregroundStyle(Color.blue.gradient)
             .accessibilityHidden(true)
-            Text("One purchase. Apple Vision Pro, Mac, iPad, and iPhone.")
+            Text("Available now on visionOS. Working on iOS, iPadOS, and macOS.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

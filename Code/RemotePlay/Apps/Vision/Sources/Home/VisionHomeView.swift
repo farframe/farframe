@@ -71,7 +71,7 @@ struct VisionHomeView: View {
             switch state.accessPresentation {
             case .checking:
                 Button {} label: {
-                    headerActionLabel("Start Your 3-Day Trial", symbol: "play.fill")
+                    headerActionLabel("Unlock Farframe", symbol: "play.fill")
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.white)
@@ -84,7 +84,7 @@ struct VisionHomeView: View {
                 Button {
                     send(.startTrial)
                 } label: {
-                    headerActionLabel("Start Your 3-Day Trial", symbol: "play.fill")
+                    headerActionLabel("Unlock Farframe", symbol: "play.fill")
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.white)
@@ -285,7 +285,7 @@ struct VisionHomeView: View {
 
                 // The wordmark already sits in the window title, so the card
                 // carries the offer instead of repeating the name.
-                Text("Play everywhere.\nPay once.")
+                Text("Play at home.\nPay once.")
                     .font(.title2.bold())
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -299,7 +299,7 @@ struct VisionHomeView: View {
 
             FarframeSupportedDevices()
 
-            Text("Play your PS5 in your space. Wake a saved console or connect when it is ready.")
+            Text("Play your PS5 on your home network. Automatic Away Play is not yet available.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

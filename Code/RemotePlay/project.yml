@@ -17,7 +17,7 @@ configs:
 settings:
   base:
     SWIFT_VERSION: 6.0
-    CURRENT_PROJECT_VERSION: 4
+    CURRENT_PROJECT_VERSION: 5
     MARKETING_VERSION: "1.0"
     ENABLE_USER_SCRIPT_SANDBOXING: true
     ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: true
@@ -66,7 +66,7 @@ targets:
         # Farframe keeps one stable identity for preferences, Keychain-backed
         # console registrations, and the cross-platform App Store record.
         PRODUCT_BUNDLE_IDENTIFIER: com.unshackledpursuit.remoteplay.vision
-        MARKETING_VERSION: "1.0"
+        MARKETING_VERSION: "1.1"
         PRODUCT_NAME: Farframe
         GENERATE_INFOPLIST_FILE: true
         # App/system name. Designed brand assets may use the FARFRAME wordmark.
