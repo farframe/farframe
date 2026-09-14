@@ -632,6 +632,33 @@ struct MobileRemotePlayCoordinatorTests {
         await fixture.coordinator.disconnect()
     }
 
+    @Test("Wake deadline releases Home and late results cannot replace a new connection", arguments: [false, true])
+    func wakeDeadlineRejectsLateCompletion(failsLate: Bool) async {
+        let console = testConsole()
+        let gate = AsyncGate()
+        let session = FakeMobileRemotePlaySession(snapshot: .idle)
+        let fixture = makeFixture(
+            console: console, sessions: [session], wakeGate: gate,
+            wakeFailure: failsLate ? .noSession : nil,
+            wakeRequestTimeout: .milliseconds(20)
+        )
+        await fixture.coordinator.prepare()
+        let wake = Task { await fixture.coordinator.wake(consoleID: console.id) }
+        await gate.waitUntilEntered()
+        #expect(await eventually {
+            fixture.coordinator.phase == .failed("Wake took too long. Check your connection and try again.")
+        })
+        #expect(fixture.coordinator.canStartConsoleAction)
+        #expect(!fixture.coordinator.wakeRequestWasSent)
+        #expect(await fixture.coordinator.prepareConnection(consoleID: console.id))
+        await gate.open()
+        await wake.value
+        #expect(fixture.coordinator.phase == .prepared(console.id))
+        #expect(fixture.coordinator.activeSessionID == session.id)
+        #expect(fixture.coordinator.wakeStatusMessage == nil)
+        await fixture.coordinator.disconnect()
+    }
+
     @Test("Wake distinguishes send from settling and blocks duplicates through both")
     func wakeSettlingAndPersistentConfirmation() async {
         let console = testConsole()
@@ -1313,6 +1340,7 @@ private extension MobileRemotePlayCoordinatorTests {
         wakeGate: AsyncGate? = nil,
         wakeFailure: FakeFailure? = nil,
         wakeSettlingGate: AsyncGate? = nil,
+        wakeRequestTimeout: Duration = .seconds(10),
         pairing: MobilePlayStationPairingDependencies = .unavailable,
         connectionNetworkSnapshot: MobileConnectionNetworkSnapshot = .unavailable
     ) -> Fixture {
@@ -1337,6 +1365,7 @@ private extension MobileRemotePlayCoordinatorTests {
             pairing: pairing,
             monitorInterval: monitorInterval,
             controllerDeliveryInterval: controllerDeliveryInterval,
+            wakeRequestTimeout: wakeRequestTimeout,
             waitForWakeSettling: {
                 await wakeSettlingGate?.wait()
                 try Task.checkCancellation()

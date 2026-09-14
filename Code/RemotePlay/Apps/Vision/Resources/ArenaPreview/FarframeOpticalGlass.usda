@@ -1,0 +1,226 @@
+#usda 1.0
+# Copyright © 2024 Apple Inc.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#
+# Derived from Apple adjustable-material sample: material graph only.
+# Samples environment radiance; does not refract live screen geometry.
+(
+    defaultPrim = "Root"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Root"
+{
+    def Material "FF_OpticalEnvironmentGlass"
+    {
+        float inputs:opacity = 0.035
+        float inputs:grazingOpacity = 0.18
+        float inputs:eta = 0.67
+        float inputs:roughness = 0.085
+        token outputs:mtlx:surface.connect = </Root/FF_OpticalEnvironmentGlass/PBRSurface.outputs:out>
+        token outputs:realitykit:vertex
+
+        def Shader "PreviewSurface"
+        {
+            uniform token info:id = "ND_UsdPreviewSurface_surfaceshader"
+            token outputs:out
+        }
+
+        def Shader "UnlitSurface"
+        {
+            uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+            bool inputs:applyPostProcessToneMap
+            color3f inputs:color.connect = None
+            bool inputs:hasPremultipliedAlpha
+            float inputs:opacity.connect = </Root/FF_OpticalEnvironmentGlass/BoundedGrazingOpacity.outputs:out>
+            float inputs:opacityThreshold
+            token outputs:out
+        }
+
+        def Shader "RealitykitEnvironmentRadiance"
+        {
+            uniform token info:id = "ND_realitykit_environment_radiance"
+            color3f inputs:baseColor = (0.82, 0.95, 1) (
+                colorSpace = "srgb_displayp3"
+            )
+            half inputs:metallic = 1
+            float3 inputs:normal.connect = </Root/FF_OpticalEnvironmentGlass/Normalize.outputs:out>
+            half inputs:roughness = 0.170044
+            half inputs:roughness.connect = </Root/FF_OpticalEnvironmentGlass/Convert.outputs:out>
+            half inputs:specular = 0
+            color3f outputs:diffuseRadiance
+            color3f outputs:specularRadiance
+        }
+
+        def Shader "Normal"
+        {
+            uniform token info:id = "ND_normal_vector3"
+            string inputs:space = "world"
+            float3 outputs:out
+        }
+
+        def Shader "ViewDirection"
+        {
+            uniform token info:id = "ND_realitykit_viewdirection_vector3"
+            float3 outputs:out
+        }
+
+        def Shader "Refract"
+        {
+            uniform token info:id = "ND_realitykit_refract_vector3"
+            float inputs:eta = 1
+            float inputs:eta.connect = </Root/FF_OpticalEnvironmentGlass.inputs:eta>
+            float3 inputs:in.connect = </Root/FF_OpticalEnvironmentGlass/ViewDirection.outputs:out>
+            float3 inputs:normal.connect = </Root/FF_OpticalEnvironmentGlass/Normal.outputs:out>
+            float3 outputs:out
+        }
+
+        def Shader "Add"
+        {
+            uniform token info:id = "ND_add_vector3"
+            float3 inputs:in1.connect = </Root/FF_OpticalEnvironmentGlass/Multiply.outputs:out>
+            float3 inputs:in2.connect = </Root/FF_OpticalEnvironmentGlass/Refract.outputs:out>
+            float3 outputs:out
+        }
+
+        def Shader "Normalize"
+        {
+            uniform token info:id = "ND_normalize_vector3"
+            float3 inputs:in.connect = </Root/FF_OpticalEnvironmentGlass/Add.outputs:out>
+            float3 outputs:out
+        }
+
+        def Shader "Multiply"
+        {
+            uniform token info:id = "ND_multiply_vector3FA"
+            prepend float3 inputs:in1.connect = </Root/FF_OpticalEnvironmentGlass/ViewDirection.outputs:out>
+            float inputs:in2 = -1
+            float3 outputs:out
+        }
+
+        def Shader "FaceNormal"
+        {
+            uniform token info:id = "ND_normalize_vector3"
+            float3 inputs:in.connect = </Root/FF_OpticalEnvironmentGlass/Normal.outputs:out>
+            float3 outputs:out
+        }
+
+        def Shader "FaceView"
+        {
+            uniform token info:id = "ND_normalize_vector3"
+            float3 inputs:in.connect = </Root/FF_OpticalEnvironmentGlass/ViewDirection.outputs:out>
+            float3 outputs:out
+        }
+
+        def Shader "FacingDot"
+        {
+            uniform token info:id = "ND_dotproduct_vector3"
+            float3 inputs:in1.connect = </Root/FF_OpticalEnvironmentGlass/FaceNormal.outputs:out>
+            float3 inputs:in2.connect = </Root/FF_OpticalEnvironmentGlass/FaceView.outputs:out>
+            float outputs:out
+        }
+
+        def Shader "FacingAbsolute"
+        {
+            uniform token info:id = "ND_absval_float"
+            float inputs:in.connect = </Root/FF_OpticalEnvironmentGlass/FacingDot.outputs:out>
+            float outputs:out
+        }
+
+        def Shader "FacingCosine"
+        {
+            uniform token info:id = "ND_clamp_float"
+            float inputs:in.connect = </Root/FF_OpticalEnvironmentGlass/FacingAbsolute.outputs:out>
+            float inputs:low = 0
+            float inputs:high = 1
+            float outputs:out
+        }
+
+        def Shader "GrazingFactor"
+        {
+            uniform token info:id = "ND_subtract_float"
+            float inputs:in1 = 1
+            float inputs:in2.connect = </Root/FF_OpticalEnvironmentGlass/FacingCosine.outputs:out>
+            float outputs:out
+        }
+
+        def Shader "GrazingPower"
+        {
+            uniform token info:id = "ND_power_float"
+            float inputs:in1.connect = </Root/FF_OpticalEnvironmentGlass/GrazingFactor.outputs:out>
+            float inputs:in2 = 5
+            float outputs:out
+        }
+
+        def Shader "BoundedGrazingOpacity"
+        {
+            uniform token info:id = "ND_mix_float"
+            float inputs:bg.connect = </Root/FF_OpticalEnvironmentGlass.inputs:opacity>
+            float inputs:fg.connect = </Root/FF_OpticalEnvironmentGlass.inputs:grazingOpacity>
+            float inputs:mix.connect = </Root/FF_OpticalEnvironmentGlass/GrazingPower.outputs:out>
+            float outputs:out
+        }
+
+        def Shader "PBRSurface"
+        {
+            uniform token info:id = "ND_realitykit_pbr_surfaceshader"
+            float inputs:ambientOcclusion
+            color3f inputs:baseColor = (0, 0, 0) (
+                colorSpace = "srgb_displayp3"
+            )
+            float inputs:clearcoat = 0
+            float inputs:clearcoatRoughness
+            color3f inputs:emissiveColor.connect = </Root/FF_OpticalEnvironmentGlass/RestrainedEnvironmentRadiance.outputs:out>
+            bool inputs:hasPremultipliedAlpha
+            float inputs:metallic
+            float3 inputs:normal
+            float inputs:opacity.connect = </Root/FF_OpticalEnvironmentGlass/BoundedGrazingOpacity.outputs:out>
+            float inputs:opacityThreshold
+            float inputs:roughness = 0.20104
+            # Environment radiance already supplies the optical response.
+            # A second PBR specular lobe creates unbounded white facets.
+            float inputs:specular = 0
+            token outputs:out
+        }
+
+        def Shader "Convert"
+        {
+            uniform token info:id = "ND_convert_float_half"
+            prepend float inputs:in.connect = </Root/FF_OpticalEnvironmentGlass.inputs:roughness>
+            half outputs:out
+        }
+
+        def Shader "Add_1"
+        {
+            uniform token info:id = "ND_add_color3"
+            color3f inputs:in1.connect = </Root/FF_OpticalEnvironmentGlass/RealitykitEnvironmentRadiance.outputs:diffuseRadiance>
+            color3f inputs:in2.connect = </Root/FF_OpticalEnvironmentGlass/RealitykitEnvironmentRadiance.outputs:specularRadiance>
+            color3f outputs:out
+        }
+
+        # Keep HDR probe radiance from turning transparent panes into luminous
+        # sheets. This only bounds the sampled environment's emissive branch.
+        def Shader "ClampedEnvironmentRadiance"
+        {
+            uniform token info:id = "ND_clamp_color3"
+            color3f inputs:in.connect = </Root/FF_OpticalEnvironmentGlass/Add_1.outputs:out>
+            color3f inputs:low = (0, 0, 0)
+            color3f inputs:high = (1, 1, 1)
+            color3f outputs:out
+        }
+
+        def Shader "RestrainedEnvironmentRadiance"
+        {
+            uniform token info:id = "ND_multiply_color3FA"
+            color3f inputs:in1.connect = </Root/FF_OpticalEnvironmentGlass/ClampedEnvironmentRadiance.outputs:out>
+            float inputs:in2 = 0.18
+            color3f outputs:out
+        }
+    }
+}

@@ -43,6 +43,23 @@ private struct FarframeTransactionIdentity: Hashable, Sendable {
 @Observable
 public final class FarframeAccessStore {
     public private(set) var state: FarframeAccessState = .loading
+    /// Signed entitlement decision, independent of development access overrides.
+    public private(set) var verifiedState: FarframeAccessState = .loading
+
+    public var allowsImmersive: Bool {
+        switch verifiedState {
+        case .lifetimeUnlocked: true
+        case .trialActive(let startedAt, let expiresAt):
+            nowProvider() >= startedAt && nowProvider() < expiresAt
+        default: false
+        }
+    }
+
+    @discardableResult
+    public func revalidateImmersiveAccess() async -> Bool {
+        await refreshEntitlements()
+        return allowsImmersive
+    }
     public private(set) var products: [String: Product] = [:]
     public private(set) var isLoadingProducts = false
     public private(set) var purchaseInProgressID: String?
@@ -164,8 +181,8 @@ public final class FarframeAccessStore {
             "Trial complete"
         case .lifetimeUnlocked(let ownership):
             ownership == .familyShared
-                ? "FARFRAME PRO shared"
-                : "FARFRAME PRO active"
+                ? "Lifetime Unlock shared"
+                : "Lifetime Unlock active"
         }
     }
 
@@ -178,7 +195,7 @@ public final class FarframeAccessStore {
         case .trialActive(_, let expiresAt):
             "Full access until \(expiresAt.formatted(date: .abbreviated, time: .shortened))."
         case .trialExpired:
-            "Upgrade to FARFRAME PRO to keep connecting and playing."
+            "Choose Lifetime Unlock to keep playing."
         case .lifetimeUnlocked(let ownership):
             ownership == .familyShared
                 ? "Connect and Remote Play are unlocked through Family Sharing."
@@ -263,7 +280,7 @@ public final class FarframeAccessStore {
             case .trialActive:
                 notice = "Your active 3-Day Trial was restored."
             case .trialExpired:
-                notice = "Your 3-Day Trial history was restored. Upgrade to FARFRAME PRO to keep connecting and playing."
+                notice = "Your 3-Day Trial history was restored. Choose Lifetime Unlock to keep playing."
             case .trialEligible, .loading:
                 notice = "No previous FARFRAME purchases were found for this Apple Account."
             }
@@ -557,6 +574,7 @@ public final class FarframeAccessStore {
             transactionHistory: history,
             now: now
         )
+        verifiedState = evaluatedState
         #if DEBUG
         if honorsDebugProOverride,
            UserDefaults.standard.bool(forKey: debugProOverrideKey) {
@@ -592,8 +610,8 @@ public final class FarframeAccessStore {
         expiryTask?.cancel()
         expiryTask = nil
 
-        guard case .trialActive(_, let expiresAt) = newState else { return }
-        let remaining = max(0, expiresAt.timeIntervalSinceNow)
+        guard case .trialActive(_, let expiresAt) = verifiedState else { return }
+        let remaining = max(0, expiresAt.timeIntervalSince(nowProvider()))
         expiryTask = Task { [weak self] in
             do {
                 try await Task.sleep(for: .seconds(remaining))
@@ -601,6 +619,8 @@ public final class FarframeAccessStore {
                 return
             }
             guard let self else { return }
+            // Revoke expired access before waiting for an asynchronous StoreKit load.
+            self.applyCurrentState(now: self.nowProvider())
             await self.refreshEntitlements()
         }
     }

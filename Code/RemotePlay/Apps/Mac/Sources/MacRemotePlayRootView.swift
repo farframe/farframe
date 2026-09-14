@@ -65,6 +65,15 @@ struct MacRemotePlayRootView: View {
     @AppStorage(FarframePlayStyleOnboarding.hasBeenAskedKey)
     private var playStyleWasAsked = false
 
+    private var reviewPhase: FarframeReviewSessionPhase {
+        switch coordinator.phase {
+        case .ready: .home
+        case .streaming: .streaming
+        case .disconnecting: .ending
+        default: .other
+        }
+    }
+
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
@@ -89,6 +98,7 @@ struct MacRemotePlayRootView: View {
         } detail: {
             detail
         }
+        .farframeReviewPrompt(phase: reviewPhase, unobstructed: selection == .play && pairingTarget == nil && addressesTarget == nil && consolePendingRemoval == nil && !paywallIsPresented && !playStyleOnboardingIsPresented)
         .task {
             await coordinator.prepare()
         }
@@ -172,7 +182,7 @@ struct MacRemotePlayRootView: View {
             FarframePaywallView(accessStore: accessStore)
         }
         .confirmationDialog(
-            "Remove this PS5 from this Mac?",
+            "Remove this console from this Mac?",
             isPresented: Binding(
                 get: { consolePendingRemoval != nil },
                 set: { isPresented in

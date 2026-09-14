@@ -38,7 +38,7 @@ struct MacPlayStationPairingView: View {
                         status
                     }
                     .formStyle(.grouped)
-                    .textFieldStyle(.roundedBorder)
+                    .farframePairingTextFieldStyle()
                 }
             }
             .navigationTitle(
@@ -103,7 +103,7 @@ struct MacPlayStationPairingView: View {
                     .accessibilityHidden(true)
 
                 VStack(spacing: 8) {
-                    Text("PS5 paired")
+                    Text("Console paired")
                         .font(.title2.bold())
                         .accessibilityAddTraits(.isHeader)
                     Text(confirmation.consoleName)
@@ -157,8 +157,9 @@ struct MacPlayStationPairingView: View {
     }
 
     private var consoleAddress: some View {
-        Section("1. PS5 address") {
+        Section("1. Console address") {
             TextField("PS5 IP address or host name", text: $model.hostAddress)
+                .accessibilityLabel("Console IP address")
                 .accessibilityIdentifier("remoteplay.mac.console-address")
                 .disabled(model.inputsAreEditable == false)
 
@@ -203,7 +204,7 @@ struct MacPlayStationPairingView: View {
                     prompt: Text("Paste your Account ID here")
                 )
                 .labelsHidden()
-                .textFieldStyle(.roundedBorder)
+                .farframePairingTextFieldStyle()
                 .accessibilityLabel("Remote Play Account ID")
                 .accessibilityIdentifier("remoteplay.mac.manual-account-id")
                 .disabled(model.inputsAreEditable == false)
@@ -243,6 +244,7 @@ struct MacPlayStationPairingView: View {
         Section("3. Link Device code") {
             if model.localNetworkPreflightCompleted {
                 TextField("8-digit code", text: $model.linkDevicePIN)
+                    .accessibilityLabel("Eight-digit Link Device code")
                     .accessibilityIdentifier("remoteplay.mac.link-device-code")
                     .textContentType(.oneTimeCode)
                     .disabled(model.inputsAreEditable == false)
@@ -344,5 +346,20 @@ struct MacPlayStationPairingView: View {
         case .editing, .canceling, .savePending:
             "Cancel"
         }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func farframePairingTextFieldStyle() -> some View {
+        #if compiler(>=6.4)
+        if #available(macOS 27.0, *) {
+            self.textFieldStyle(.bordered).textInputBorderShape(.roundedRectangle)
+        } else {
+            self.textFieldStyle(.roundedBorder)
+        }
+        #else
+        self.textFieldStyle(.roundedBorder)
+        #endif
     }
 }

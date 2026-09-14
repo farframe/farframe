@@ -1,5 +1,9 @@
 import FarframeStorefront
 import SwiftUI
+#if DEBUG && targetEnvironment(simulator)
+import InputCore
+import PlayStationRemotePlay
+#endif
 
 @main
 struct RemotePlayMobileApp: App {
@@ -15,7 +19,12 @@ struct RemotePlayMobileApp: App {
     /// to be able to reach the same coordinator and the same entitlement gate
     /// the moment it appears.
     init() {
+        #if DEBUG && targetEnvironment(simulator)
+        let coordinator = ProcessInfo.processInfo.arguments.contains("--farframe-home-preview")
+            ? makeMobileHomePreviewCoordinator() : MobileRemotePlayCoordinator()
+        #else
         let coordinator = MobileRemotePlayCoordinator()
+        #endif
         let accessStore = FarframeAccessStore()
         let startGate = MobileSessionStartGate(coordinator: coordinator, accessStore: accessStore)
         _coordinator = State(initialValue: coordinator)
@@ -354,6 +363,38 @@ private struct MobileDisconnectedPlayerPreview: View {
         }
         // Stand in for fixed video pixels, not dynamically sized app text.
         .dynamicTypeSize(.large)
+    }
+}
+#endif
+
+#if DEBUG && targetEnvironment(simulator)
+/// Actual Home/Settings/editor views, with a saved synthetic console and a
+/// deliberately slow Wake. No registration, console/network or account access.
+@MainActor
+private func makeMobileHomePreviewCoordinator() -> MobileRemotePlayCoordinator {
+    let console = MobileConsoleSummary(
+        id: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!,
+        name: "Preview console", hostAddress: "192.0.2.20"
+    )
+    return MobileRemotePlayCoordinator(
+        dependencies: MobileRemotePlayDependencies(
+            loadStartup: { MobileStartupSnapshot(consoles: [console]) },
+            wake: { _ in try await Task.sleep(for: .seconds(60)) },
+            makeSession: { _, _ in throw PlayStationAccountIdentityAcquisitionError.unavailable },
+            controllerSource: MobileHomePreviewController(
+                isConnected: ProcessInfo.processInfo.arguments.contains("--farframe-preview-controller-connected")
+            ),
+            wakeRequestTimeout: .seconds(60)
+        ),
+        defaults: UserDefaults(suiteName: "Farframe.HomePreview")!
+    )
+}
+
+private struct MobileHomePreviewController: MobileRemotePlayControllerSource {
+    let isConnected: Bool
+    func snapshot() -> ControllerSnapshot { .neutral }
+    func connectionSnapshot() -> MobileControllerConnection {
+        isConnected ? MobileControllerConnection(isConnected: true, name: "DualSense Wireless Controller") : .disconnected
     }
 }
 #endif

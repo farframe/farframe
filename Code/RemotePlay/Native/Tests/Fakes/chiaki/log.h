@@ -7,6 +7,7 @@ typedef int32_t ChiakiLogLevel;
 
 enum {
     CHIAKI_LOG_ERROR = 1,
+    CHIAKI_LOG_INFO = 4,
 };
 
 typedef void (*ChiakiLogCallback)(ChiakiLogLevel level, const char *message, void *user);

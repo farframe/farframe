@@ -67,13 +67,16 @@ public final class SampleBufferVideoSurfaceBinding: @unchecked Sendable {
     }
 
     @MainActor
-    public func attach(_ layer: AVSampleBufferDisplayLayer) {
+    @discardableResult
+    public func attach(_ layer: AVSampleBufferDisplayLayer, preservingOutgoingImage: Bool = false) -> Task<Void, Never> {
         let predecessor = operationTail
         let presenter = self.presenter
-        operationTail = Task { @MainActor in
+        let attachment = Task { @MainActor in
             await predecessor?.value
-            await presenter.attach(layer)
+            await presenter.attach(layer, preservingOutgoingImage: preservingOutgoingImage)
         }
+        operationTail = attachment
+        return attachment
     }
 
     @MainActor
@@ -83,6 +86,58 @@ public final class SampleBufferVideoSurfaceBinding: @unchecked Sendable {
         operationTail = Task { @MainActor in
             await predecessor?.value
             await presenter.detach(layer)
+        }
+    }
+
+    /// A standalone renderer belongs to exactly one RealityKit material. The
+    /// completion describes only this queued attachment, not session authority.
+    /// Callers still cannot submit frames or activate generations.
+    @MainActor
+    @discardableResult
+    public func attach(_ renderer: AVSampleBufferVideoRenderer, preservingOutgoingImage: Bool = false) -> Task<Void, Never> {
+        let predecessor = operationTail
+        let presenter = self.presenter
+        let attachment = Task { @MainActor in
+            await predecessor?.value
+            await presenter.attach(renderer, preservingOutgoingImage: preservingOutgoingImage)
+        }
+        operationTail = attachment
+        return attachment
+    }
+
+    @MainActor
+    public func detach(_ renderer: AVSampleBufferVideoRenderer) {
+        let predecessor = operationTail
+        let presenter = self.presenter
+        operationTail = Task { @MainActor in
+            await predecessor?.value
+            await presenter.detach(renderer)
+        }
+    }
+
+    /// Opt-in, local-only image analysis after this renderer's accepted enqueue.
+    /// The observer must make a bounded handoff and return immediately. It is
+    /// removed automatically when the presentation backend changes.
+    @MainActor
+    public func observePresentedFrames(
+        on renderer: AVSampleBufferVideoRenderer,
+        handler: @escaping @Sendable (DecodedVideoFrame) -> Void
+    ) {
+        let predecessor = operationTail
+        let presenter = self.presenter
+        operationTail = Task { @MainActor in
+            await predecessor?.value
+            await presenter.observePresentedFrames(on: renderer, handler: handler)
+        }
+    }
+
+    @MainActor
+    public func stopObservingPresentedFrames(on renderer: AVSampleBufferVideoRenderer) {
+        let predecessor = operationTail
+        let presenter = self.presenter
+        operationTail = Task { @MainActor in
+            await predecessor?.value
+            await presenter.stopObservingPresentedFrames(on: renderer)
         }
     }
 

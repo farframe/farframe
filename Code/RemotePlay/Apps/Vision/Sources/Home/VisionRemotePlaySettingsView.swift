@@ -8,6 +8,8 @@ import SwiftUI
 struct VisionRemotePlaySettingsView: View {
     @Bindable var coordinator: VisionRemotePlayCoordinator
     @Bindable var accessStore: FarframeAccessStore
+    var embedded = false
+    var onDone: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var whatsNewIsPresented = false
     @State private var accessIsPresented = false
@@ -225,11 +227,13 @@ struct VisionRemotePlaySettingsView: View {
             .navigationTitle("Settings")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Done") {
+                        if let onDone { onDone() } else { dismiss() }
+                    }
                 }
             }
         }
-        .frame(minWidth: 520, minHeight: 520)
+        .frame(minWidth: embedded ? 360 : 520, minHeight: embedded ? 440 : 520)
         .sheet(isPresented: $whatsNewIsPresented) {
             FarframeWhatsNewView()
         }

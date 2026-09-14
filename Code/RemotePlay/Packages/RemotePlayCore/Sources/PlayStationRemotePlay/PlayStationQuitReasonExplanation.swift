@@ -33,7 +33,9 @@ public struct PlayStationQuitReasonExplanation: Equatable, Hashable, Sendable {
     /// conversation can still name the exact stage without leading with a
     /// number the reader cannot interpret.
     public var message: String {
-        "\(summary) \(guidance) (code \(code))"
+        identifier == "console-login-required"
+            ? "\(summary) \(guidance)"
+            : "\(summary) \(guidance) (code \(code))"
     }
 }
 
@@ -49,6 +51,13 @@ extension PlayStationNativeQuitReason {
             PlayStationQuitReasonExplanation.forCode(PlayStationNativeQuitCode.stopped)
         case .remoteDisconnected:
             PlayStationQuitReasonExplanation.forCode(PlayStationNativeQuitCode.remoteDisconnected)
+        case .consoleLoginRequired:
+            PlayStationQuitReasonExplanation(
+                code: -1000, // App-defined requirement, not a Chiaki quit code.
+                identifier: "console-login-required",
+                summary: "Your console needs its login passcode.",
+                guidance: "Unlock your user on the console, then try Connect again."
+            )
         case let .nativeFailure(code):
             PlayStationQuitReasonExplanation.forCode(code)
         }

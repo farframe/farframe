@@ -1,14 +1,31 @@
 import SwiftUI
 
 extension EnvironmentValues {
-    /// Shows the session shortcuts, or puts them away again.
-    ///
-    /// Tapping empty picture is how a player works them, and the canvas owns
-    /// that gesture. Any control that covers part of the picture — the swipe
-    /// camera surface is the first — has to be able to honour the same tap
-    /// instead of quietly eating it, so the action travels through the
-    /// environment rather than through five view signatures.
-    @Entry var farframeTogglePlayerChrome: () -> Void = {}
+    /// The canvas owns one stable controller for picture taps, the collapsed
+    /// HUD and swipe-camera taps. Passing a new closure on every body update
+    /// invalidates environment consumers even when its behavior is unchanged.
+    @Entry var farframePlayerChrome: MobilePlayerChromeController? = nil
+}
+
+@MainActor
+@Observable
+final class MobilePlayerChromeController {
+    private var state = MobilePlayerChromeState()
+    private(set) var revealGeneration = 0
+    var isVisible: Bool { state.isVisible }
+
+    func toggle(voiceOver: Bool, reduceMotion: Bool) {
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.32)) {
+            state.toggle(voiceOver: voiceOver)
+        }
+        revealGeneration &+= 1
+    }
+
+    func idleElapsed(autoHide: Bool, voiceOver: Bool, reduceMotion: Bool) {
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.32)) {
+            state.idleElapsed(autoHide: autoHide, voiceOver: voiceOver)
+        }
+    }
 }
 
 enum MobilePlayerLayoutMode: String, Equatable, Sendable {
@@ -186,8 +203,7 @@ struct MobilePlayerCanvas<Video: View, Controls: View, Actions: View>: View {
     let onResize: () -> Void
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var chrome = MobilePlayerChromeState()
-    @State private var revealGeneration = 0
+    @State private var chrome = MobilePlayerChromeController()
 
     var body: some View {
         // Read insets before expanding the child. A GeometryReader that itself
@@ -214,32 +230,25 @@ struct MobilePlayerCanvas<Video: View, Controls: View, Actions: View>: View {
                                alignment: .trailing)
                         .position(x: geometry.actions.midX, y: geometry.actions.midY)
                 }
-                .environment(\.farframeTogglePlayerChrome, toggleChrome)
+                .environment(\.farframePlayerChrome, chrome)
                 .onChange(of: proxy.size) { _, _ in onResize() }
             }
             .ignoresSafeArea()
         }
         .background(.black)
         .preferredColorScheme(.dark)
-        .task(id: "\(revealGeneration)-\(chrome.isVisible)-\(autoHideChrome)-\(voiceOver)") {
+        .task(id: "\(chrome.revealGeneration)-\(chrome.isVisible)-\(autoHideChrome)-\(voiceOver)") {
             // Only a HUD that is up can idle away. This used to open by
             // revealing, which meant a deliberate tap-to-hide was undone by the
             // timer it restarted.
             guard chrome.isVisible, autoHideChrome, !voiceOver else { return }
             do { try await Task.sleep(for: MobilePlayerGlass.hudIdleDelay) } catch { return }
             guard !Task.isCancelled else { return }
-            withAnimation(chromeAnimation) {
-                chrome.idleElapsed(autoHide: autoHideChrome, voiceOver: voiceOver)
-            }
+            chrome.idleElapsed(autoHide: autoHideChrome, voiceOver: voiceOver, reduceMotion: reduceMotion)
         }
     }
 
-    private var chromeAnimation: Animation? {
-        reduceMotion ? nil : .smooth(duration: 0.32)
-    }
-
     private func toggleChrome() {
-        withAnimation(chromeAnimation) { chrome.toggle(voiceOver: voiceOver) }
-        revealGeneration &+= 1
+        chrome.toggle(voiceOver: voiceOver, reduceMotion: reduceMotion)
     }
 }

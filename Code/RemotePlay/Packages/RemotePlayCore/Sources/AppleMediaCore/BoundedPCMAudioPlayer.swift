@@ -1,6 +1,7 @@
 import AVFoundation
 import ExperienceDomain
 import Foundation
+import OSLog
 import StreamingCore
 
 public enum PCMAudioPlaybackError: Error, Equatable, Sendable {
@@ -74,6 +75,15 @@ public final class AudioPlaybackControls: @unchecked Sendable {
         player.setMuted(isMuted)
     }
 
+    /// Explicit user recovery after a media-services reset or engine failure.
+    public func restorePlayback() { player.recoverAfterConfigurationChange(userInitiated: true) }
+
+    /// Reconcile an existing session while its owning player is visible. This
+    /// never reconnects the console or changes mute/volume preferences.
+    public func reconcilePlayback(isForeground: Bool) {
+        player.reconcilePlayback(isForeground: isForeground)
+    }
+
     public func snapshot() -> PCMAudioPlaybackSnapshot {
         player.snapshot()
     }
@@ -105,8 +115,13 @@ package typealias PCMAudioRenderHandler = @Sendable (
     _ frameCount: Int
 ) -> Void
 
+package enum PCMAudioRecoveryEvent: Sendable {
+    case configurationChanged, mediaServicesReset, interruptionBegan
+    case interruptionEnded(shouldResume: Bool)
+}
+
 package protocol PCMAudioPlaybackBackend: AnyObject, Sendable {
-    func installRecoveryHandler(_ handler: @escaping @Sendable () -> Void)
+    func installRecoveryHandler(_ handler: @escaping @Sendable (PCMAudioRecoveryEvent) -> Void)
     func activate(
         outputFormat: AVAudioFormat,
         volume: Float,
@@ -121,13 +136,16 @@ package protocol PCMAudioPlaybackBackend: AnyObject, Sendable {
 /// Sendable documents that confinement explicitly.
 private final class AVAudioEnginePCMPlaybackBackend: PCMAudioPlaybackBackend, @unchecked Sendable {
     private let handlerLock = NSLock()
-    private var recoveryHandler: (@Sendable () -> Void)?
+    private var recoveryHandler: (@Sendable (PCMAudioRecoveryEvent) -> Void)?
     private var engine: AVAudioEngine?
     private var source: AVAudioSourceNode?
     private var mixer: AVAudioMixerNode?
     private var notificationTokens: [NSObjectProtocol] = []
+    private var engineNotificationToken: NSObjectProtocol?
 
-    func installRecoveryHandler(_ handler: @escaping @Sendable () -> Void) {
+    init() { installSessionNotifications() }
+
+    func installRecoveryHandler(_ handler: @escaping @Sendable (PCMAudioRecoveryEvent) -> Void) {
         handlerLock.withLock { recoveryHandler = handler }
     }
 
@@ -169,7 +187,7 @@ private final class AVAudioEnginePCMPlaybackBackend: PCMAudioPlaybackBackend, @u
         self.engine = engine
         self.source = source
         self.mixer = mixer
-        installNotifications(for: engine)
+        installEngineNotification(for: engine)
 
         #if os(iOS) || os(visionOS)
         return PCMAudioRouteMetrics(
@@ -193,7 +211,8 @@ private final class AVAudioEnginePCMPlaybackBackend: PCMAudioPlaybackBackend, @u
     }
 
     func stop() {
-        removeNotifications()
+        if let token = engineNotificationToken { NotificationCenter.default.removeObserver(token) }
+        engineNotificationToken = nil
         engine?.stop()
         source = nil
         mixer = nil
@@ -211,18 +230,20 @@ private final class AVAudioEnginePCMPlaybackBackend: PCMAudioPlaybackBackend, @u
         removeNotifications()
     }
 
-    private func installNotifications(for engine: AVAudioEngine) {
+    private func installEngineNotification(for engine: AVAudioEngine) {
         let center = NotificationCenter.default
-        notificationTokens.append(
+        engineNotificationToken =
             center.addObserver(
                 forName: .AVAudioEngineConfigurationChange,
                 object: engine,
                 queue: nil
             ) { [weak self] _ in
-                self?.requestRecovery()
+                self?.requestRecovery(.configurationChanged)
             }
-        )
+    }
 
+    private func installSessionNotifications() {
+        let center = NotificationCenter.default
         #if os(iOS) || os(visionOS)
         notificationTokens.append(
             center.addObserver(
@@ -232,12 +253,33 @@ private final class AVAudioEnginePCMPlaybackBackend: PCMAudioPlaybackBackend, @u
             ) { [weak self] notification in
                 guard let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey]
                     as? UInt,
-                      AVAudioSession.InterruptionType(rawValue: rawType) == .ended else {
-                    return
+                      let type = AVAudioSession.InterruptionType(rawValue: rawType) else { return }
+                switch type {
+                case .began:
+                    self?.requestRecovery(.interruptionBegan)
+                case .ended:
+                    let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey]
+                        as? UInt ?? 0
+                    let options = AVAudioSession.InterruptionOptions(rawValue: rawOptions)
+                    self?.requestRecovery(.interruptionEnded(shouldResume: options.contains(.shouldResume)))
+                @unknown default: break
                 }
-                self?.requestRecovery()
             }
         )
+        notificationTokens.append(center.addObserver(
+            forName: AVAudioSession.mediaServicesWereResetNotification,
+            object: AVAudioSession.sharedInstance(), queue: nil
+        ) { [weak self] _ in self?.requestRecovery(.mediaServicesReset) })
+        // Engine-configuration notifications do not cover every output route.
+        notificationTokens.append(center.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(), queue: nil
+        ) { [weak self] notification in
+            guard let raw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  let reason = AVAudioSession.RouteChangeReason(rawValue: raw),
+                  [.newDeviceAvailable, .oldDeviceUnavailable, .routeConfigurationChange].contains(reason) else { return }
+            self?.requestRecovery(.configurationChanged)
+        })
         #endif
     }
 
@@ -245,10 +287,12 @@ private final class AVAudioEnginePCMPlaybackBackend: PCMAudioPlaybackBackend, @u
         let center = NotificationCenter.default
         notificationTokens.forEach(center.removeObserver)
         notificationTokens.removeAll(keepingCapacity: true)
+        if let token = engineNotificationToken { center.removeObserver(token) }
+        engineNotificationToken = nil
     }
 
-    private func requestRecovery() {
-        handlerLock.withLock { recoveryHandler }?()
+    private func requestRecovery(_ event: PCMAudioRecoveryEvent) {
+        handlerLock.withLock { recoveryHandler }?(event)
     }
 }
 
@@ -295,6 +339,15 @@ package final class BoundedPCMAudioPlayer: @unchecked Sendable {
     private var acceptedBuffers = 0
     private var stalePacketDrops = 0
     private var invalidBuffers = 0
+    private var recoveryRequiresUserAction = false
+    private var interruptionIsActive = false
+    private var automaticRecoveryIsAllowed = true
+    private var recoveryIsPending = false
+    private var automaticProbeAttempts = 0
+    private var lastAutomaticProbeAttempt: UInt64?
+    private var lastHealthCheck: UInt64?
+    private static let recoveryLog = Logger(subsystem: "com.unshackledpursuit.remoteplay.audio", category: "Recovery")
+    private var healthProbe: (time: UInt64, accepted: Int, rendered: Int)?
     private var recoveries: UInt64 = 0
     private var activationFailures: UInt64 = 0
     private var lastCallbackUptimeNanoseconds: UInt64?
@@ -324,8 +377,13 @@ package final class BoundedPCMAudioPlayer: @unchecked Sendable {
             channels: 2,
             interleaved: false
         )!
-        backend.installRecoveryHandler { [weak self] in
-            self?.recoverAfterConfigurationChange()
+        backend.installRecoveryHandler { [weak self] event in
+            switch event {
+            case .configurationChanged: self?.recoverAfterConfigurationChange()
+            case .mediaServicesReset: self?.mediaServicesWereReset()
+            case .interruptionBegan: self?.interruptionBegan()
+            case let .interruptionEnded(shouldResume): self?.interruptionEnded(shouldResume: shouldResume)
+            }
         }
     }
 
@@ -607,33 +665,48 @@ package final class BoundedPCMAudioPlayer: @unchecked Sendable {
         }
     }
 
-    private func recoverAfterConfigurationChange() {
-        let recovery: (UInt64, UInt64, Float)? = lock.withLock {
-            guard state == .playing, let generation = activeGeneration else { return nil }
+    fileprivate func recoverAfterConfigurationChange(userInitiated: Bool = false) {
+        let recovery: (UInt64, UInt64)? = lock.withLock {
+            guard state == .playing || state == .failed,
+                  !recoveryRequiresUserAction || userInitiated,
+                  let generation = activeGeneration else { return nil }
+            if !userInitiated && (!automaticRecoveryIsAllowed || interruptionIsActive) {
+                recoveryIsPending = true
+                return nil
+            }
+            if userInitiated {
+                interruptionIsActive = false
+                automaticProbeAttempts = 0
+            }
+            recoveryRequiresUserAction = false
+            recoveryIsPending = false
+            healthProbe = nil
             state = .recovering
             advanceEpochLocked()
             recoveries &+= 1
-            return (generation, epoch, effectiveVolumeLocked())
+            return (generation, epoch)
         }
         guard let recovery else { return }
+        Self.recoveryLog.notice("Audio recovery requested; userInitiated=\(userInitiated)")
         // A route change (headphones, headset off and on) restarts the engine;
         // the playout target learned for this network is worth keeping.
         jitterBuffer.reset(keepTarget: true)
 
         workerQueue.async { [weak self, backend, outputFormat] in
-            guard let self else { return }
+            guard let self, lock.withLock({ activeGeneration == recovery.0 && epoch == recovery.1 && state == .recovering }) else { return }
             backend.stop()
             let result: Result<PCMAudioRouteMetrics, PCMAudioPlaybackError>
             do {
                 result = .success(
                     try backend.activate(
                         outputFormat: outputFormat,
-                        volume: recovery.2,
+                        volume: effectiveVolume(),
                         render: makeRenderHandler()
                     )
                 )
             } catch {
                 result = .failure(.backendActivationFailed)
+                backend.stop()
             }
             lock.withLock {
                 guard activeGeneration == recovery.0,
@@ -645,11 +718,114 @@ package final class BoundedPCMAudioPlayer: @unchecked Sendable {
                 case let .success(metrics):
                     routeMetrics = metrics
                     state = .playing
+                    Self.recoveryLog.notice("Audio output restarted")
                 case .failure:
                     activationFailures &+= 1
                     state = .failed
+                    Self.recoveryLog.error("Audio output restart failed; preserving the game session")
                 }
             }
+        }
+    }
+
+    /// Called by the owning scene's existing monitor, not a new timer or a
+    /// realtime audio callback. Three bounded attempts cover a briefly denied
+    /// activation. Healthy output, network silence and muted audio do not
+    /// trigger an engine rebuild. A fresh foreground visit permits retry.
+    fileprivate func reconcilePlayback(isForeground: Bool) {
+        let now = uptimeNanoseconds()
+        let shouldInspect = lock.withLock { () -> Bool in
+            if automaticRecoveryIsAllowed != isForeground {
+                automaticRecoveryIsAllowed = isForeground
+                healthProbe = nil
+                lastHealthCheck = nil
+                if isForeground {
+                    automaticProbeAttempts = 0
+                    lastAutomaticProbeAttempt = nil
+                }
+            }
+            guard isForeground, activeGeneration != nil,
+                  !interruptionIsActive, !recoveryRequiresUserAction else { return false }
+            if let lastHealthCheck, now >= lastHealthCheck,
+               now - lastHealthCheck < 1_000_000_000 { return false }
+            lastHealthCheck = now
+            return true
+        }
+        guard shouldInspect else { return }
+        let ring = jitterBuffer.snapshot()
+        // Priming/underrun silence still proves that hardware is pulling.
+        let hardwareFrames = ring.renderedFrames + ring.silenceFrames
+        let shouldRecover = lock.withLock { () -> Bool in
+            guard automaticRecoveryIsAllowed, activeGeneration != nil,
+                  !interruptionIsActive, !recoveryRequiresUserAction,
+                  state == .playing || state == .failed else { return false }
+            var needsRecovery = state == .failed || recoveryIsPending
+            if state == .playing && !needsRecovery {
+                let current = (time: now, accepted: acceptedBuffers, rendered: hardwareFrames)
+                guard !isMuted, volume > 0 else { healthProbe = nil; return false }
+                guard let previous = healthProbe else { healthProbe = current; return false }
+                if hardwareFrames != previous.rendered {
+                    healthProbe = current
+                    automaticProbeAttempts = 0
+                    return false
+                }
+                guard now >= previous.time, now - previous.time >= 2_000_000_000 else { return false }
+                healthProbe = current
+                // Look for fresh admitted PCM without corresponding hardware
+                // consumption. Never mistake a silent network for a dead engine.
+                if let lastCallbackUptimeNanoseconds,
+                   now >= lastCallbackUptimeNanoseconds,
+                   now - lastCallbackUptimeNanoseconds < 1_000_000_000 {
+                    needsRecovery = acceptedBuffers > previous.accepted && ring.fillFrames > 0
+                }
+            }
+            guard needsRecovery, automaticProbeAttempts < 3 else { return false }
+            if let lastAutomaticProbeAttempt, now >= lastAutomaticProbeAttempt,
+               now - lastAutomaticProbeAttempt < 1_000_000_000 { return false }
+            automaticProbeAttempts += 1
+            lastAutomaticProbeAttempt = now
+            return true
+        }
+        if shouldRecover { recoverAfterConfigurationChange() }
+    }
+
+    private func interruptionBegan() {
+        Self.recoveryLog.notice("Audio interruption began")
+        suspendForInterruption(requiresUserAction: false)
+    }
+
+    private func interruptionEnded(shouldResume: Bool) {
+        Self.recoveryLog.notice("Audio interruption ended; shouldResume=\(shouldResume)")
+        lock.withLock {
+            interruptionIsActive = false
+            if !shouldResume { recoveryRequiresUserAction = true }
+        }
+        if shouldResume { recoverAfterConfigurationChange() }
+    }
+
+    private func mediaServicesWereReset() {
+        Self.recoveryLog.notice("Audio services reset; waiting for Restore Audio")
+        // Apple requires user action after a media-server reset. Foreground
+        // reconciliation and ordinary route notifications must not bypass it.
+        suspendForInterruption(requiresUserAction: true)
+    }
+
+    private func suspendForInterruption(requiresUserAction: Bool) {
+        let resetEpoch: UInt64? = lock.withLock {
+            guard activeGeneration != nil, state != .inactive else { return nil }
+            state = .failed
+            if requiresUserAction { recoveryRequiresUserAction = true }
+            else { interruptionIsActive = true }
+            recoveryIsPending = true
+            healthProbe = nil
+            advanceEpochLocked()
+            return epoch
+        }
+        guard let resetEpoch else { return }
+        jitterBuffer.reset(keepTarget: true)
+        workerQueue.async { [weak self, backend] in
+            guard let self, lock.withLock({ epoch == resetEpoch && state == .failed }) else { return }
+            backend.stop()
         }
     }
 
@@ -660,6 +836,13 @@ package final class BoundedPCMAudioPlayer: @unchecked Sendable {
     }
 
     private func resetGenerationMetricsLocked() {
+        recoveryRequiresUserAction = false
+        interruptionIsActive = false
+        recoveryIsPending = false
+        automaticProbeAttempts = 0
+        lastAutomaticProbeAttempt = nil
+        lastHealthCheck = nil
+        healthProbe = nil
         negotiatedFormat = nil
         packetFrames = Self.nominalPacketFrames
         receivedBuffers = 0

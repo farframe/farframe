@@ -274,7 +274,7 @@ struct MacRemotePlayPlayerView: View {
             Button {
                 Task { await coordinator.goHome() }
             } label: {
-                Label("Go to PlayStation Home", systemImage: "playstation.logo")
+                Label("Go to PlayStation Home", systemImage: "gamecontroller")
             }
             .buttonStyle(.glassProminent)
         }
@@ -290,7 +290,7 @@ struct MacRemotePlayPlayerView: View {
                 Button {
                     Task { await coordinator.goHome() }
                 } label: {
-                    Label("PS Home", systemImage: "playstation.logo")
+                    Label("PS Home", systemImage: "gamecontroller")
                 }
                 .buttonStyle(.glass)
                 .disabled(canSendHome == false)

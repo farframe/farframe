@@ -13,6 +13,11 @@ struct MobileRemotePlayHomeView: View {
     let onReRegister: (MobilePairingTarget) -> Void
     let onRemove: (MobileConsoleSummary) -> Void
     var onEditAddresses: (MobileConsoleSummary) -> Void = { _ in }
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @State private var showsControllerHelp = false
+    @State private var addressErrorMessage: String?
+
+    private var isCompactHeight: Bool { verticalSizeClass == .compact }
 
     /// The readable column every non-hero section sits in. The hero is
     /// deliberately outside it, because its whole job is to run edge to edge.
@@ -28,9 +33,9 @@ struct MobileRemotePlayHomeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 22) {
+            VStack(spacing: isCompactHeight ? 12 : 22) {
                 hero
-                VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: isCompactHeight ? 12 : 22) {
                     accessBanner
                     if let reconnectConsole, coordinator.hasActiveSession == false {
                         reconnectCard(reconnectConsole)
@@ -50,6 +55,15 @@ struct MobileRemotePlayHomeView: View {
         // word twice within eighty points. The iPad cannot show a navigation
         // title at all beside the floating tab bar, so the wordmark has to live
         // in the hero, and it is the bar that gives way.
+        .alert("Couldn’t change connection", isPresented: Binding(
+            get: { addressErrorMessage != nil },
+            set: { if !$0 { addressErrorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { addressErrorMessage = nil }
+        } message: { Text(addressErrorMessage ?? "Please try again.") }
+        .sheet(isPresented: $showsControllerHelp) {
+            MobileControllerHelpView(connection: coordinator.controllerConnection)
+        }
         .navigationTitle("Play")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -90,24 +104,25 @@ struct MobileRemotePlayHomeView: View {
     /// the app has no sidebar at all any more. An explicit offset is what
     /// actually reaches past the top inset from inside a `ScrollView`.
     private var hero: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: isCompactHeight ? 8 : 14) {
             HStack(spacing: 14) {
-                FarframeBrandMark(size: 58)
+                FarframeBrandMark(size: isCompactHeight ? 44 : 58)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 5) {
                     Text("FARFRAME").font(.title2.bold()).tracking(1.5)
-                    Text("Your PS5. Your favorite screen.")
+                    Text("Play at home.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
             }
-            Text("Pair once on your home Wi-Fi, then play at home or away with touch or a DualSense.")
+            Text("Stream your PlayStation 5 on your home network.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.top, 22)
-        .padding(.bottom, 34)
+        .padding(.top, isCompactHeight ? 8 : 22)
+        .padding(.bottom, isCompactHeight ? 10 : 34)
         .frame(maxWidth: Self.readableWidth, alignment: .leading)
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 20)
@@ -150,29 +165,29 @@ struct MobileRemotePlayHomeView: View {
             EmptyView()
         case .trialEligible:
             accessBannerCard(
-                title: "Try Farframe free for 3 days",
-                detail: "Then keep it forever with a one-time Lifetime Unlock. No subscription.",
+                title: accessStore.trialProduct == nil ? "Unlock Farframe" : "Try Farframe for 3 days",
+                detail: "One-time Lifetime Unlock. No subscription.",
                 symbol: "clock.badge.checkmark",
                 tint: .blue,
-                actionTitle: "Start Free 3-Day Trial"
+                actionTitle: accessStore.trialProduct == nil ? "View Access" : "View Trial"
             )
         case .trialActive(_, let expiresAt):
             TimelineView(.periodic(from: .now, by: 60)) { context in
                 accessBannerCard(
                     title: "3-Day Trial · \(Self.trialTimeRemaining(until: expiresAt, now: context.date))",
-                    detail: "Unlock Farframe for life on every Apple device, for your whole family.",
+                    detail: "Lifetime Unlock includes Family Sharing.",
                     symbol: "clock.fill",
                     tint: .green,
-                    actionTitle: "Upgrade to Pro"
+                    actionTitle: "Lifetime Unlock"
                 )
             }
         case .trialExpired:
             accessBannerCard(
                 title: "Your 3-Day Trial has ended",
-                detail: "Upgrade to Farframe Pro to keep connecting and playing.",
+                detail: "Unlock once to keep playing.",
                 symbol: "lock.fill",
                 tint: .orange,
-                actionTitle: "Upgrade to Pro"
+                actionTitle: "Lifetime Unlock"
             )
         }
     }
@@ -298,14 +313,22 @@ struct MobileRemotePlayHomeView: View {
                 }
             }
         case .waking(let consoleID):
-            statusCard(
-                title: coordinator.wakeRequestWasSent ? "Wake request sent" : "Sending wake request",
-                detail: coordinator.wakeRequestWasSent
-                    ? "Waiting briefly before Connect becomes available. \(consoleName(consoleID)) has not confirmed it is awake."
-                    : "Sending a wake request to \(consoleName(consoleID)).",
-                symbol: "power",
-                progress: true
-            )
+            VStack(alignment: .trailing, spacing: 8) {
+                statusCard(
+                    title: coordinator.wakeRequestWasSent ? "Wake request sent" : "Sending wake request",
+                    detail: coordinator.wakeRequestWasSent
+                        ? "Waiting briefly before Connect becomes available. \(consoleName(consoleID)) has not confirmed it is awake."
+                        : "Sending a wake request to \(consoleName(consoleID)).",
+                    symbol: "power",
+                    progress: true
+                )
+                Button("Stop Waiting") {
+                    Task { await coordinator.cancelConnection() }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .accessibilityHint("Stops waiting. Your console may still wake.")
+            }
         case .prepared, .connecting:
             statusCard(
                 title: "Opening Remote Play",
@@ -323,7 +346,7 @@ struct MobileRemotePlayHomeView: View {
         case .failed(let message):
             messageCard(
                 title: "Remote Play needs attention",
-                detail: message + "\n\nFarframe connects directly to the address saved for this route. At home, use the Home route on your Wi-Fi. Away from home, first configure access to your home network separately, then add the reachable PS5 address from the console menu and choose Away. Farframe does not provide a VPN.",
+                detail: message + "\n\nConnect on the same home network as your console. Automatic Away Play is not available yet.",
                 symbol: "exclamationmark.triangle.fill",
                 buttonTitle: coordinator.requiresStartupRecovery ? "Check Again" : "Dismiss",
                 shareURL: coordinator.requiresStartupRecovery
@@ -355,9 +378,9 @@ struct MobileRemotePlayHomeView: View {
             EmptyView()
         } else if coordinator.consoles.isEmpty {
             ContentUnavailableView {
-                Label("No PS5 saved here", systemImage: "playstation.logo")
+                Label("No console saved", systemImage: "gamecontroller")
             } description: {
-                Text("Pair directly with your PS5 to start playing. Leave the console on or in rest mode on this network and this device will find it. Registration credentials stay on this device.")
+                Text("Pair on your home network to start playing. Your registration stays on this device.")
             } actions: {
                 Button("Pair a PS5", action: onPair)
                     .buttonStyle(.glassProminent)
@@ -422,9 +445,9 @@ struct MobileRemotePlayHomeView: View {
     }
 
     private func consoleCard(_ console: MobileConsoleSummary, isPrimary: Bool) -> some View {
-        VStack(alignment: .leading, spacing: isPrimary ? 22 : 18) {
+        VStack(alignment: .leading, spacing: isCompactHeight ? 12 : (isPrimary ? 22 : 18)) {
             HStack(spacing: 14) {
-                Image(systemName: "playstation.logo")
+                Image(systemName: "gamecontroller")
                     .font(isPrimary ? .title : .title2)
                     .foregroundStyle(.blue)
                     .frame(width: isPrimary ? 58 : 48, height: isPrimary ? 58 : 48)
@@ -461,18 +484,22 @@ struct MobileRemotePlayHomeView: View {
                     if console.hasAwayAddress {
                         Button(
                             console.connectionRoute == .away
-                                ? "Switch to Home Route"
-                                : "Switch to Away Route"
+                                ? "Use Home Address"
+                                : "Use Manual Address"
                         ) {
                             Task {
-                                try? await coordinator.updateConnectionAddresses(
-                                    consoleID: console.id,
-                                    hostAddress: console.hostAddress,
-                                    awayHostAddress: console.awayHostAddress,
-                                    connectionRoute: console.connectionRoute == .away
-                                        ? .home
-                                        : .away
-                                )
+                                do {
+                                    try await coordinator.updateConnectionAddresses(
+                                        consoleID: console.id,
+                                        hostAddress: console.hostAddress,
+                                        awayHostAddress: console.awayHostAddress,
+                                        connectionRoute: console.connectionRoute == .away
+                                            ? .home
+                                            : .away
+                                    )
+                                } catch {
+                                    addressErrorMessage = error.localizedDescription
+                                }
                             }
                         }
                     }
@@ -497,6 +524,7 @@ struct MobileRemotePlayHomeView: View {
                 // A custom menu label gets no pointer treatment of its own,
                 // unlike the standard buttons beside it.
                 .hoverEffect(.highlight)
+                .accessibilityLabel("Console options for \(console.name)")
                 .disabled(coordinator.canPresentPairing == false)
             }
 
@@ -506,6 +534,7 @@ struct MobileRemotePlayHomeView: View {
                 } label: {
                     Label("Connect", systemImage: "play.fill")
                         .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.glassProminent)
                 .disabled(connectActionsAreDisabled)
@@ -513,14 +542,16 @@ struct MobileRemotePlayHomeView: View {
                 Button {
                     Task { await coordinator.wake(consoleID: console.id) }
                 } label: {
-                    Label("Wake", systemImage: "power")
+                    Label(coordinator.phase == .waking(console.id) ? "Waking…" : "Wake", systemImage: "power")
+                        .frame(minWidth: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.glass)
                 .disabled(connectActionsAreDisabled)
             }
-            .controlSize(isPrimary ? .large : .regular)
+            .controlSize(.large)
         }
-        .padding(isPrimary ? 22 : 18)
+        .padding(isCompactHeight ? 14 : (isPrimary ? 22 : 18))
         // A console card is content, not navigation, and Apple reserves Liquid
         // Glass for the layer that floats above content. The card stays a solid
         // grouped background; the buttons inside it are the glass.
@@ -610,16 +641,22 @@ struct MobileRemotePlayHomeView: View {
     }
 
     private var controllerBadge: some View {
-        Label(
-            coordinator.controllerConnection.isConnected
-                ? coordinator.controllerConnection.name ?? "Controller"
-                : "No Controller",
-            systemImage: coordinator.controllerConnection.isConnected
-                ? "gamecontroller.fill"
-                : "gamecontroller"
-        )
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(coordinator.controllerConnection.isConnected ? .green : .secondary)
+        Button {
+            showsControllerHelp = true
+        } label: {
+            Image(systemName: coordinator.controllerConnection.isConnected
+                ? "gamecontroller.fill" : "gamecontroller")
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(minWidth: 44, minHeight: 44)
+        .foregroundStyle(coordinator.controllerConnection.isConnected ? Color.green : Color.secondary)
+        .accessibilityLabel("Controller")
+        .accessibilityValue(coordinator.controllerConnection.isConnected
+            ? "Connected: \(coordinator.controllerConnection.name ?? "Controller")" : "Not connected")
+        .accessibilityHint("Shows controller status and Bluetooth pairing help.")
+        .accessibilityIdentifier("home.controller")
     }
 
     private var connectActionsAreDisabled: Bool {
@@ -627,6 +664,6 @@ struct MobileRemotePlayHomeView: View {
     }
 
     private func consoleName(_ id: UUID) -> String {
-        coordinator.consoles.first(where: { $0.id == id })?.name ?? "your PS5"
+        coordinator.consoles.first(where: { $0.id == id })?.name ?? "your console"
     }
 }

@@ -23,3 +23,4 @@ Code/RemotePlay/Native/CMake
 Code/RemotePlay/Native/Sources
 Code/RemotePlay/Native/Tests
 Code/RemotePlay/project.yml
+Code/RemotePlay/Tests/Vision

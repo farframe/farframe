@@ -1,0 +1,33 @@
+name: FarframeArenaRenderHarness
+options:
+  deploymentTarget:
+    visionOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+    CODE_SIGNING_ALLOWED: NO
+targets:
+  FarframeArenaRenderHarness:
+    type: application
+    platform: visionOS
+    sources:
+      - ArenaRenderHarness.swift
+      - ../../../Apps/Vision/Sources/ImmersiveArena/VisionArenaExteriorStyle.swift
+      - ../../../Apps/Vision/Sources/ImmersiveArena/VisionArenaExteriorController.swift
+      - ../../../Apps/Vision/Sources/ImmersiveArena/VisionArenaExteriorFactory.swift
+      - ../../../Apps/Vision/Sources/ImmersiveArena/VisionArenaExteriorPicker.swift
+      - ../../../Apps/Vision/Sources/ImmersiveArena/VisionArenaMaterials.swift
+      - ../../../Apps/Vision/Sources/ImmersiveArena/VisionArenaLighting.swift
+      - ../../../Apps/Vision/Sources/ImmersiveArena/VisionArenaBloom.swift
+      - ../../../Apps/Vision/Sources/ImmersiveArena/VisionArenaScreenRig.swift
+      - ../../../Apps/Vision/Sources/ImmersiveArena/VisionArenaScreenPlacement.swift
+      - ../../../Apps/Vision/Sources/ImmersiveArena/VisionArenaSavedScreens.swift
+      - ../../../Apps/Vision/Sources/ImmersiveArena/VisionArenaControlsPanel.swift
+      - ../../../Apps/Vision/Sources/ImmersiveArena/VisionArenaLiveColorPolicy.swift
+      - ../../../Apps/Vision/Resources/ArenaPreview
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.unshackledpursuit.farframe.arena-render-harness
+        PRODUCT_NAME: Arena Render Harness
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES

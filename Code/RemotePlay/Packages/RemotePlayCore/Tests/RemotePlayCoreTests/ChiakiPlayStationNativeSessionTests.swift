@@ -139,3 +139,19 @@ func chiakiControlsFailClosedBeforeNativeSessionStart() async throws {
 
     try await session.join()
 }
+
+@Test
+func chiakiConnectionDiagnosticsMapOnlyKnownValues() {
+    #expect(ChiakiSessionEventMapping.map(
+        eventType: Int32(RP_CHIAKI_SESSION_EVENT_LOGIN_REQUIRED.rawValue), detailCode: 0
+    ) == .loginRequired)
+    #expect(ChiakiSessionEventMapping.map(
+        eventType: Int32(RP_CHIAKI_SESSION_EVENT_CONNECTION_STAGE.rawValue),
+        detailCode: Int32(RP_CHIAKI_CONNECTION_SESSION_ACCEPTED.rawValue)
+    ) == .connectionStage(.sessionAccepted))
+    #expect(ChiakiSessionEventMapping.map(
+        eventType: Int32(RP_CHIAKI_SESSION_EVENT_CONNECTION_STAGE.rawValue), detailCode: 999
+    ) == nil)
+    #expect(PlayStationNativeQuitReason.consoleLoginRequired.explanation.identifier == "console-login-required")
+    #expect(PlayStationNativeQuitReason.consoleLoginRequired.explanation.message.contains("Unlock your user"))
+}

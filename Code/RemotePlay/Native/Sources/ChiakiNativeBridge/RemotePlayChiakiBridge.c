@@ -56,6 +56,43 @@ static void discard_log(ChiakiLogLevel level, const char *message, void *user)
     (void)user;
 }
 
+/* Never forward, retain or print the raw message. Exact known strings become
+ * fixed enum values; everything else (including headers/addresses) is dropped.
+ * This allowlist must be checked whenever the pinned Chiaki source changes. */
+static void session_log(ChiakiLogLevel level, const char *message, void *user)
+{
+    (void)level;
+    RPChiakiSessionHandle *handle = user;
+    if(!handle || !message || !handle->callbacks.event || !handle->callbacks.user)
+        return;
+    static const struct { const char *message; int32_t stage; } stages[] = {
+        { "Starting session request for PS5", RP_CHIAKI_CONNECTION_REQUESTING_SESSION },
+        { "Sending session request", RP_CHIAKI_CONNECTION_REQUEST_SENT },
+        { "Session request successful", RP_CHIAKI_CONNECTION_SESSION_ACCEPTED },
+        { "Starting ctrl", RP_CHIAKI_CONNECTION_STARTING_CONTROL },
+        { "Starting Senkusha", RP_CHIAKI_CONNECTION_MEASURING_NETWORK },
+        { "Senkusha completed successfully", RP_CHIAKI_CONNECTION_NETWORK_CHECKED },
+        { "StreamConnection sending big", RP_CHIAKI_CONNECTION_STREAM_HANDSHAKE },
+        { "StreamConnection successfully received bang", RP_CHIAKI_CONNECTION_STREAM_ACCEPTED },
+        { "StreamConnection successfully received streaminfo", RP_CHIAKI_CONNECTION_STREAM_INFO },
+        { "Session request connect failed eventually.", RP_CHIAKI_CONNECTION_REQUEST_CONNECT_FAILED },
+        { "Failed to send session request", RP_CHIAKI_CONNECTION_REQUEST_SEND_FAILED },
+        { "Failed to receive session request response", RP_CHIAKI_CONNECTION_RESPONSE_MISSING },
+        { "Failed to parse session request response", RP_CHIAKI_CONNECTION_RESPONSE_INVALID },
+        { "Nonce invalid", RP_CHIAKI_CONNECTION_NONCE_INVALID },
+        { "StreamConnection bang receive timeout", RP_CHIAKI_CONNECTION_STREAM_REPLY_MISSING },
+    };
+    for(size_t i = 0; i < sizeof(stages) / sizeof(stages[0]); i++)
+    {
+        if(strcmp(message, stages[i].message) == 0)
+        {
+            handle->callbacks.event(handle->callbacks.user,
+                RP_CHIAKI_SESSION_EVENT_CONNECTION_STAGE, stages[i].stage);
+            return;
+        }
+    }
+}
+
 static void clear_sensitive(void *buffer, size_t size)
 {
     volatile uint8_t *bytes = buffer;
@@ -179,6 +216,10 @@ static void session_event_callback(ChiakiEvent *event, void *user)
 
     switch(event->type)
     {
+        case CHIAKI_EVENT_LOGIN_PIN_REQUEST:
+            handle->callbacks.event(handle->callbacks.user,
+                RP_CHIAKI_SESSION_EVENT_LOGIN_REQUIRED, 0);
+            break;
         case CHIAKI_EVENT_CONNECTED:
             handle->callbacks.event(
                 handle->callbacks.user,
@@ -683,7 +724,7 @@ int32_t rp_chiaki_session_initialize(
     connect_info.packet_loss_max = 0.05;
     connect_info.enable_idr_on_fec_failure = true;
 
-    chiaki_log_init(&handle->log, CHIAKI_LOG_ERROR, discard_log, NULL);
+    chiaki_log_init(&handle->log, CHIAKI_LOG_ERROR | CHIAKI_LOG_INFO, session_log, handle);
     const int32_t init_result = chiaki_session_init(
         session_for_handle(handle),
         &connect_info,

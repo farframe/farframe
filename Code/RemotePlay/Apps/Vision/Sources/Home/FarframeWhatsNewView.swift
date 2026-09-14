@@ -20,10 +20,10 @@ struct FarframeWhatsNewView: View {
                     header
                     featureSection(
                         title: "Play in your space",
-                        subtitle: "A focused PS5 Remote Play experience built for Apple Vision Pro.",
+                        subtitle: "Stream at home on your own network.",
                         features: [
-                            .init(icon: "play.rectangle.fill", tint: .blue, title: "A spatial PS5 screen", detail: "Wake a saved PS5, connect, and place a responsive 1080p game screen wherever it feels comfortable."),
-                            .init(icon: "gamecontroller.fill", tint: .green, title: "DualSense controls", detail: "Use the standard PS5 button layout with PS Menu, Home, Options, Create, and controller status close at hand."),
+                            .init(icon: "play.rectangle.fill", tint: .blue, title: "Your game, in your space", detail: "Wake your console, connect, and place the screen where it feels comfortable."),
+                            .init(icon: "gamecontroller.fill", tint: .green, title: "DualSense controls", detail: "Familiar buttons, with controller status close at hand."),
                             .init(icon: "waveform", tint: .cyan, title: "Clear, adjustable audio", detail: "Mute with a tap or drag the pinned volume control while the stream keeps the game in focus.")
                         ]
                     )
@@ -33,7 +33,7 @@ struct FarframeWhatsNewView: View {
                         features: [
                             .init(icon: "slider.horizontal.3", tint: .purple, title: "Customizable control rail", detail: "Pin the controls you use, let the rail fade while you play, and open Stats when you want a closer look."),
                             .init(icon: "gauge.with.dots.needle.67percent", tint: .orange, title: "Set up by what you play", detail: "Answer what you're playing and Farframe sets the quality for it, with the resolution, frame rate, and bitrate shown under every option before you choose."),
-                            .init(icon: "power", tint: .mint, title: "Wake, disconnect, or rest", detail: "Manage the PS5 session directly and choose whether closing the player leaves the console awake or puts it in Rest Mode.")
+                            .init(icon: "power", tint: .mint, title: "Wake, disconnect, or rest", detail: "Leave your console awake or put it in Rest Mode when you finish.")
                         ]
                     )
                 }
@@ -59,7 +59,7 @@ struct FarframeWhatsNewView: View {
                 .foregroundStyle(.cyan)
             Text("Welcome to Farframe")
                 .font(.largeTitle.bold())
-            Text("Bring your PS5 into your space with a clean screen, familiar controls, and quick session management.")
+            Text("Bring your PlayStation 5 into your space with a clear screen and familiar controls.")
                 .font(.title3)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

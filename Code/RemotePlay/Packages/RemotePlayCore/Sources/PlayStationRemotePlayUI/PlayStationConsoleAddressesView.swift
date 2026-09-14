@@ -39,7 +39,7 @@ public struct PlayStationConsoleAddressesView: View {
     @State private var connectionRoute: PlayStationConnectionRoute
     @State private var isSaving = false
     @State private var errorMessage: String?
-    @State private var helpIsExpanded = false
+    @State private var manualIsExpanded: Bool
 
     public init(
         target: PlayStationConsoleAddressesTarget,
@@ -50,6 +50,7 @@ public struct PlayStationConsoleAddressesView: View {
         _hostAddress = State(initialValue: target.hostAddress)
         _awayHostAddress = State(initialValue: target.awayHostAddress ?? "")
         _connectionRoute = State(initialValue: target.connectionRoute)
+        _manualIsExpanded = State(initialValue: target.awayHostAddress != nil)
     }
 
     private var normalizedAway: String? {
@@ -75,37 +76,36 @@ public struct PlayStationConsoleAddressesView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Section("Away") {
-                    addressField("PS5 address reachable from your network", text: $awayHostAddress)
-                    Text("Optional. Used when you choose the Away route. Your network must already provide a path to your PS5. Farframe connects directly to this address; it does not provide a VPN or automatic internet connection setup.")
+                Section("Away Play") {
+                    Text("Automatic Away Play is not available yet.")
+                    Text("Your home pairing stays saved. Re-registering won’t enable Away Play.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    DisclosureGroup("How to reach your PS5 from away", isExpanded: $helpIsExpanded) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Existing home-network access: if you separately configured a VPN to your home network, enter the PS5 address reachable through it. Farframe does not install, configure, or operate that VPN. Same-home-network play does not need a VPN.")
-                            Text("Port forwarding: forward UDP 9295–9304 and TCP 9295 on your router to the PS5, and UDP 9302 for Wake. Enter your public IP or dynamic DNS name here.")
-                            Text("Keep the PS5 set to stay connected to the internet in Rest Mode so Wake works.")
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
                 }
 
-                Section("Route") {
-                    Picker("Connect using", selection: $connectionRoute) {
-                        ForEach(PlayStationConnectionRoute.allCases, id: \.self) { route in
-                            Text(route.title).tag(route)
+                Section {
+                    DisclosureGroup("Advanced: Manual Address", isExpanded: $manualIsExpanded) {
+                        addressField("Console address", text: $awayHostAddress)
+                        Text("For an existing network route to your console. This address does not set up automatic Away Play.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if normalizedAway != nil {
+                            Picker("Connect using", selection: $connectionRoute) {
+                                Text("Home").tag(PlayStationConnectionRoute.home)
+                                Text("Manual").tag(PlayStationConnectionRoute.away)
+                            }
+                            .pickerStyle(.segmented)
+                            .disabled(isSaving)
+                            Text("Wake and Connect use the selected address after you save.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            LabeledContent("Connect using", value: "Home")
+                            Text("Enter a manual address above to choose it.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
-                    .pickerStyle(.segmented)
-                    .disabled(normalizedAway == nil)
-                    Text(
-                        normalizedAway == nil
-                            ? "Add an Away address to enable the Away route."
-                            : "Wake and Connect use the \(effectiveRoute.title) address. Switch back to Home when you return."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 }
 
                 if let errorMessage {

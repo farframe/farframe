@@ -69,9 +69,6 @@ enum PlayStationWebSignInRedirectResult: Sendable {
 enum PlayStationWebSignInService {
     private static let accountBase = "https://ca.account.sony.com"
     private static let authorizeEndpoint = "\(accountBase)/api/authz/v3/oauth/authorize"
-    private static let tokenEndpoint = "\(accountBase)/api/authz/v3/oauth/token"
-    private static let accountInfoEndpoint =
-        "https://auth.api.sonyentertainmentnetwork.com/2.0/oauth/token"
     private static let clientID = "ba495a24-818c-472b-b12d-ff231c1b5745"
     private static let clientSecret = "mvaiZkRsAsI1IBkY"
     static let redirectHost = "remoteplay.dl.playstation.net"
@@ -84,12 +81,13 @@ enum PlayStationWebSignInService {
         "sessionManager:remotePlaySession.system.update",
     ].joined(separator: " ")
 
-    private struct TokenResponse: Decodable {
-        let accessToken: String
-
-        enum CodingKeys: String, CodingKey {
-            case accessToken = "access_token"
-        }
+    static var authorizationClient: PlayStationAuthorizationClient {
+        PlayStationAuthorizationClient(configuration: .init(
+            clientID: clientID, clientSecret: clientSecret,
+            tokenEndpoint: URL(string: "\(accountBase)/api/authz/v3/oauth/token")!,
+            accountEndpoint: URL(string: "https://auth.api.sonyentertainmentnetwork.com/2.0/oauth/token")!,
+            redirectURI: URL(string: redirectURI)!, scopes: scopes
+        ))
     }
 
     static func authorizationRequest() throws -> PlayStationWebSignInRequest {
@@ -146,76 +144,7 @@ enum PlayStationWebSignInService {
     static func accountIdentity(
         fromAuthorizationCode code: String
     ) async throws -> PlayStationRemotePlayAccountIdentity {
-        let token = try await exchangeCodeForToken(code)
-        return try await fetchAccountIdentity(accessToken: token)
-    }
-
-    private static func exchangeCodeForToken(_ code: String) async throws -> String {
-        guard let url = URL(string: tokenEndpoint) else {
-            throw PlayStationWebSignInError.invalidAuthorizationURL
-        }
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-            forHTTPHeaderField: "User-Agent"
-        )
-        request.httpBody = formBody([
-            "grant_type": "authorization_code",
-            "code": code,
-            "client_id": clientID,
-            "client_secret": clientSecret,
-            "redirect_uri": redirectURI,
-            "scope": scopes,
-        ])
-        let (data, response) = try await transientSession().data(for: request)
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            throw PlayStationWebSignInError.tokenExchangeFailed(
-                (response as? HTTPURLResponse)?.statusCode ?? -1
-            )
-        }
-        let token = try JSONDecoder().decode(TokenResponse.self, from: data).accessToken
-        guard token.isEmpty == false else {
-            throw PlayStationWebSignInError.invalidAccountResponse
-        }
-        return token
-    }
-
-    private static func fetchAccountIdentity(
-        accessToken: String
-    ) async throws -> PlayStationRemotePlayAccountIdentity {
-        guard let encodedToken = accessToken.addingPercentEncoding(
-            withAllowedCharacters: .urlPathAllowed
-        ), let url = URL(string: "\(accountInfoEndpoint)/\(encodedToken)") else {
-            throw PlayStationWebSignInError.invalidAuthorizationURL
-        }
-        let basic = Data("\(clientID):\(clientSecret)".utf8).base64EncodedString()
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
-        request.httpMethod = "GET"
-        request.setValue("Basic \(basic)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        let (data, response) = try await transientSession().data(for: request)
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            throw PlayStationWebSignInError.accountLookupFailed(
-                (response as? HTTPURLResponse)?.statusCode ?? -1
-            )
-        }
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw PlayStationWebSignInError.invalidAccountResponse
-        }
-        let rawUserID: String?
-        if let value = object["user_id"] as? String {
-            rawUserID = value
-        } else if let value = object["user_id"] as? NSNumber {
-            rawUserID = value.stringValue
-        } else {
-            rawUserID = nil
-        }
-        guard let rawUserID, let userID = UInt64(rawUserID) else {
-            throw PlayStationWebSignInError.invalidAccountResponse
-        }
-        return try Self.identity(userID: userID, onlineID: object["online_id"] as? String)
+        try await authorizationClient.signIn(code: code, enableAwayPlay: false).identity
     }
 
     /// The Remote Play Account ID is the little-endian encoding of the PSN user ID.
@@ -227,22 +156,6 @@ enum PlayStationWebSignInService {
         let bytes = withUnsafeBytes(of: &littleEndian) { Data($0) }
         let accountID = try PlayStationAccountID(bytes: bytes)
         return PlayStationRemotePlayAccountIdentity(accountID: accountID, displayName: onlineID)
-    }
-
-    private static func transientSession() -> URLSession {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.urlCache = nil
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.urlCredentialStorage = nil
-        return URLSession(configuration: configuration)
-    }
-
-    private static func formBody(_ values: [String: String]) -> Data? {
-        var components = URLComponents()
-        components.queryItems = values
-            .sorted { $0.key < $1.key }
-            .map { URLQueryItem(name: $0.key, value: $0.value) }
-        return components.percentEncodedQuery?.data(using: .utf8)
     }
 
     private static func randomHex(byteCount: Int) throws -> String {

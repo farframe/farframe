@@ -251,3 +251,147 @@ final class MobilePlayerChromeUITests: XCTestCase {
         assertEndOffersAWayOut(app, "Portrait, after expanding the collapsed HUD")
     }
 }
+
+/// Real Home views under a slow dependency, with no real account or console.
+final class MobileHomeResponseUITests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+    }
+
+    private func launchHome(controllerConnected: Bool = false) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--farframe-home-preview", "-farframe.playStyle.firstRunAsked", "YES"]
+        if controllerConnected { app.launchArguments.append("--farframe-preview-controller-connected") }
+        app.launch()
+        XCTAssertTrue(app.buttons["Wake"].waitForExistence(timeout: 20))
+        return app
+    }
+
+    @MainActor func testHomeActionsKeepNormalButtonHeightAndFullTouchTargets() {
+        let app = launchHome()
+        for title in ["Connect", "Wake"] {
+            let button = app.buttons[title]
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+            XCTAssertLessThanOrEqual(button.frame.height, 56, "Native padding must not stack on a 44-point label")
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+        }
+        XCTAssertTrue(app.staticTexts["Stream your PlayStation 5 on your home network."].exists)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "Compact Home actions"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
+    func testControllerHelpOpensOffCentreAndSurvivesRotation() {
+        let app = launchHome()
+        let badge = app.buttons["home.controller"]
+        XCTAssertTrue(badge.waitForExistence(timeout: 5))
+        XCTAssertEqual(badge.value as? String, "Not connected")
+        XCTAssertGreaterThanOrEqual(badge.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(badge.frame.height, 44)
+        badge.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .withOffset(CGVector(dx: 0, dy: 12)).tap()
+        XCTAssertTrue(app.navigationBars["Controller"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["2. Hold PS + Create until the light flashes."].exists)
+        XCTAssertTrue(app.otherElements["controller.pairingDiagram"].exists)
+        XCTAssertFalse(app.staticTexts["Hold PS + SHARE until the light flashes, then select the controller in Settings → Bluetooth. SHARE is left of the touchpad."].exists)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "Controller Bluetooth help"
+        capture.lifetime = .keepAlways
+        add(capture)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        app.buttons["Done"].tap()
+        XCTAssertTrue(badge.waitForExistence(timeout: 5))
+        let wake = app.buttons["Wake"]
+        for _ in 0..<3 where !wake.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        let landscape = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        landscape.name = "Compact landscape Home"
+        landscape.lifetime = .keepAlways
+        add(landscape)
+        XCTAssertTrue(wake.isHittable, app.debugDescription)
+        XCTAssertGreaterThanOrEqual(wake.frame.height, 44)
+        XCTAssertLessThanOrEqual(wake.frame.height, 56)
+        wake.tap()
+        XCTAssertTrue(app.buttons["Stop Waiting"].waitForExistence(timeout: 5))
+        app.buttons["Stop Waiting"].tap()
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(badge.isHittable)
+    }
+
+    func testConnectedControllerShowsStatusAndOptionalPairingHelp() {
+        let app = launchHome(controllerConnected: true)
+        let badge = app.buttons["home.controller"]
+        XCTAssertTrue(badge.waitForExistence(timeout: 5))
+        XCTAssertEqual(badge.value as? String, "Connected: DualSense Wireless Controller")
+        badge.tap()
+        XCTAssertTrue(app.navigationBars["Controller"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Ready to play")).firstMatch.exists)
+        app.buttons["Pair another controller"].tap()
+        XCTAssertTrue(app.otherElements["controller.pairingDiagram"].waitForExistence(timeout: 5))
+        let olderHelp = app.buttons["Using a DualShock 4?"]
+        for _ in 0..<3 where !olderHelp.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        olderHelp.tap()
+        XCTAssertTrue(app.staticTexts["Hold PS + SHARE until the light flashes, then select the controller in Settings → Bluetooth. SHARE is left of the touchpad."].waitForExistence(timeout: 5))
+        app.buttons["Done"].tap()
+        XCTAssertTrue(badge.waitForExistence(timeout: 5))
+    }
+
+    func testWakeAcceptsOffCentreTapAndCancelRestoresHome() {
+        let app = launchHome()
+        let wake = app.buttons["Wake"]
+        XCTAssertTrue(wake.isEnabled)
+        XCTAssertGreaterThanOrEqual(wake.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(wake.frame.width, 44)
+        wake.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .withOffset(CGVector(dx: 0, dy: 14)).tap()
+        let cancel = app.buttons["Stop Waiting"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        cancel.tap()
+        XCTAssertTrue(app.buttons["Wake"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Wake"].isEnabled)
+        XCTAssertTrue(app.buttons["Connect"].isEnabled)
+    }
+
+    func testSettingsStillRespondsWhileWakeIsPending() {
+        let app = launchHome()
+        app.buttons["Wake"].tap()
+        XCTAssertTrue(app.buttons["Stop Waiting"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Play"].tap()
+        let cancel = app.buttons["Stop Waiting"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        cancel.tap()
+        XCTAssertTrue(app.buttons["Wake"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Wake"].isEnabled)
+    }
+
+    func testManualAddressIsExplicitAndPickerWorksAfterEntry() {
+        let app = launchHome()
+        app.buttons["Console options for Preview console"].tap()
+        app.buttons["Connection Addresses…"].tap()
+        XCTAssertTrue(app.staticTexts["Automatic Away Play is not available yet."].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.segmentedControls.count, 0)
+        app.buttons["Advanced: Manual Address"].tap()
+        let field = app.textFields["Console address"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("192.0.2.30")
+        let manual = app.segmentedControls.buttons["Manual"]
+        XCTAssertTrue(manual.waitForExistence(timeout: 5))
+        // Dismiss the keyboard without submitting or saving any registration.
+        app.swipeDown()
+        manual.tap()
+        XCTAssertTrue(manual.isSelected, app.debugDescription)
+        app.segmentedControls.buttons["Home"].tap()
+        XCTAssertTrue(app.segmentedControls.buttons["Home"].isSelected, app.debugDescription)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons["Wake"].waitForExistence(timeout: 5))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Home after manual address cancellation"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+}

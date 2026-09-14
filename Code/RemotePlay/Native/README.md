@@ -10,7 +10,7 @@ Farframe configures the upstream `CHIAKI_ENABLE_RUDP` switch `OFF`. The source-l
 
 ## Reproduce the XCFramework
 
-The complete Xcode 26.6 pipeline is:
+The development pipeline is pinned to Xcode 27.0 RC (27A266a), SDK27.0, with all deployment floors kept at26.0. This does not change the released1.1 build or establish signed distribution evidence. Run:
 
 ```bash
 RP_BUILD_JOBS=6 Code/RemotePlay/Native/Scripts/build-xcframework.sh \

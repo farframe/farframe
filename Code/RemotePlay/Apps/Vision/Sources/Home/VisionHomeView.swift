@@ -299,7 +299,7 @@ struct VisionHomeView: View {
 
             FarframeSupportedDevices()
 
-            Text("Play your PS5 on your home network. Automatic Away Play is not yet available.")
+            Text("Stream your console on your home network.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -348,7 +348,7 @@ struct VisionHomeView: View {
                     Text("Remote Play is active")
                         .font(.headline)
                     Text(consoleName(for: consoleID).map { "Playing on \($0)." }
-                        ?? "Your PS5 stream is playing.")
+                        ?? "Your stream is playing.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -361,9 +361,9 @@ struct VisionHomeView: View {
 
         case .removing(let consoleID):
             operationCard(
-                title: "Removing PS5",
+                title: "Removing console",
                 detail: consoleName(for: consoleID).map { "Securely removing \($0) from this app…" }
-                    ?? "Securely removing the saved PS5 from this app…",
+                    ?? "Removing the saved console from this app…",
                 symbol: "trash"
             )
 
@@ -429,7 +429,7 @@ struct VisionHomeView: View {
 
     private var emptyView: some View {
         ContentUnavailableView {
-            Label("Pair your PS5", systemImage: "playstation.logo")
+            Label("Pair your console", systemImage: "gamecontroller")
         } description: {
             Text("Link a console once, then return here to Wake or Connect.")
         } actions: {
@@ -452,7 +452,7 @@ struct VisionHomeView: View {
 
         return VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 14) {
-                Image(systemName: "playstation.logo")
+                Image(systemName: "gamecontroller")
                     .font(.title2)
                     .foregroundStyle(.blue)
                     .frame(width: 42, height: 42)
@@ -657,7 +657,7 @@ struct VisionHomeView: View {
                     .foregroundStyle(.orange)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Finish PS5 pairing")
+                    Text("Finish console pairing")
                         .font(.headline)
                     Text(message)
                         .font(.subheadline)
@@ -687,7 +687,7 @@ struct VisionHomeView: View {
                     .foregroundStyle(.orange)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Finish restoring saved PS5 data")
+                    Text("Finish restoring console data")
                         .font(.headline)
                     Text(message)
                         .font(.subheadline)

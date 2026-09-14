@@ -546,7 +546,9 @@ private struct MobileTouchCameraPadSurface: View {
     let sensitivity: Double
     let onChange: (Float, Float) -> Void
 
-    @Environment(\.farframeTogglePlayerChrome) private var toggleChrome
+    @Environment(\.farframePlayerChrome) private var chrome
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pad = MobileTouchCameraPad()
     @State private var tick: Task<Void, Never>?
 
@@ -568,7 +570,9 @@ private struct MobileTouchCameraPadSurface: View {
                     .onEnded { value in
                         let distance = hypot(value.translation.width, value.translation.height)
                         stop()
-                        if distance <= Self.tapDistance { toggleChrome() }
+                        if distance <= Self.tapDistance {
+                            chrome?.toggle(voiceOver: voiceOver, reduceMotion: reduceMotion)
+                        }
                     }
             )
             // The drawn stick is the accessible way to aim. An invisible

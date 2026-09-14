@@ -88,12 +88,15 @@ public enum PlayStationNativeQuitReason: Equatable, Sendable {
     case normal
     case remoteDisconnected
     case nativeFailure(code: Int32)
+    case consoleLoginRequired
 }
 
 public enum PlayStationNativeSessionEvent: Equatable, Sendable {
     /// Chiaki's transport is established, but decoded media has not yet proven playback.
     case transportReady
     case quit(PlayStationNativeQuitReason)
+    case loginRequired
+    case connectionStage(PlayStationConnectionStage)
     /// Console-driven controller output. Purely additive: a consumer that
     /// ignores it loses nothing else, and it never gates media.
     case controllerFeedback(ControllerFeedbackEvent)
@@ -222,6 +225,7 @@ public struct PlayStationSessionSnapshot: Equatable, Sendable {
     /// the audio output. The stream is deliberately allowed to run silent
     /// instead of being refused; see `UP-026`.
     public let audioIsUnavailable: Bool
+    public let lastConnectionStage: PlayStationConnectionStage?
 
     public init(
         state: StreamingConnectionState,
@@ -230,7 +234,8 @@ public struct PlayStationSessionSnapshot: Equatable, Sendable {
         firstDecodedFrameSeen: Bool = false,
         displayIsBlocked: Bool = false,
         lastQuitReason: PlayStationNativeQuitReason? = nil,
-        audioIsUnavailable: Bool = false
+        audioIsUnavailable: Bool = false,
+        lastConnectionStage: PlayStationConnectionStage? = nil
     ) {
         self.state = state
         self.generation = generation
@@ -239,6 +244,7 @@ public struct PlayStationSessionSnapshot: Equatable, Sendable {
         self.displayIsBlocked = displayIsBlocked
         self.lastQuitReason = lastQuitReason
         self.audioIsUnavailable = audioIsUnavailable
+        self.lastConnectionStage = lastConnectionStage
     }
 }
 
@@ -325,6 +331,7 @@ public actor PlayStationSessionCoordinator {
     private var generationCounter: UInt64 = 0
     private var lastQuitReason: PlayStationNativeQuitReason?
     private var audioIsUnavailable = false
+    private var lastConnectionStage: PlayStationConnectionStage?
     /// One extra activation attempt absorbs the transient `Session lookup
     /// failed` (OSStatus -50) seen right after a previous session released the
     /// process audio route.
@@ -369,7 +376,8 @@ public actor PlayStationSessionCoordinator {
             firstDecodedFrameSeen: activeSession?.firstDecodedFrameSeen ?? false,
             displayIsBlocked: activeSession?.displayRestrictionState.snapshot() ?? false,
             lastQuitReason: lastQuitReason,
-            audioIsUnavailable: audioIsUnavailable
+            audioIsUnavailable: audioIsUnavailable,
+            lastConnectionStage: lastConnectionStage
         )
     }
 
@@ -401,6 +409,7 @@ public actor PlayStationSessionCoordinator {
         }
 
         lastQuitReason = nil
+        lastConnectionStage = nil
         audioIsUnavailable = false
         state = .preparing
 
@@ -688,6 +697,25 @@ public actor PlayStationSessionCoordinator {
         }
 
         switch event {
+        case .connectionStage(let stage):
+            guard activeSession.teardownTask == nil,
+                  activeSession.mediaAdmissionGate.acceptsMedia() else { return }
+            // Callbacks may arrive from separate native threads; older progress
+            // must not replace a later step or a recorded startup failure.
+            if stage.rawValue > (lastConnectionStage?.rawValue ?? 0) {
+                lastConnectionStage = stage
+                #if DEBUG
+                print("[FARFRAME Session] connection stage \(stage.rawValue): \(stage.summary) (session \(instanceTag))")
+                #endif
+            }
+
+        case .loginRequired:
+            guard activeSession.teardownTask == nil,
+                  activeSession.mediaAdmissionGate.acceptsMedia() else { return }
+            // No passcode UI exists yet. Fail promptly with an unlock action;
+            // do not strand the native thread waiting forever for a PIN.
+            await receive(.quit(.consoleLoginRequired), generation: generation)
+
         case .transportReady:
             #if DEBUG
             print(
@@ -701,7 +729,11 @@ public actor PlayStationSessionCoordinator {
             self.activeSession = activeSession
             updateStreamingState(generation: generation)
 
-        case let .quit(reason):
+        case let .quit(incomingReason):
+            // Stopping a PIN-blocked native session emits normal/stopped. Keep
+            // the initiating cause regardless of which teardown waiter resumes.
+            let reason: PlayStationNativeQuitReason = lastQuitReason == .consoleLoginRequired
+                ? .consoleLoginRequired : incomingReason
             #if DEBUG
             // Every connect builds a fresh coordinator, so the generation is
             // always 1 in a shipping build and cannot tell two attempts apart.
@@ -728,7 +760,7 @@ public actor PlayStationSessionCoordinator {
             switch reason {
             case .normal, .remoteDisconnected:
                 state = .disconnected
-            case .nativeFailure:
+            case .nativeFailure, .consoleLoginRequired:
                 state = .failed
             }
 

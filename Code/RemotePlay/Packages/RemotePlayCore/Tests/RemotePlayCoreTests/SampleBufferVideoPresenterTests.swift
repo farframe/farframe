@@ -449,6 +449,98 @@ func surfaceBindingSerializesReplacementAndIdentitySafeDetach() async throws {
     #expect(binding.snapshot() == presenter.snapshot())
 }
 
+@Test
+@MainActor
+func standaloneRendererAttachmentWaitsForFlushAndPreservesIdentitySafeReturn() async throws {
+    let presenter = BoundedSampleBufferVideoPresenter()
+    let oldBackend = FakeSampleBufferPresentationBackend()
+    await presenter.attach(backend: oldBackend)
+    try await presenter.activate(generation: 31)
+    oldBackend.delayNextFlush()
+    let binding = SampleBufferVideoSurfaceBinding(presenter: presenter)
+    let renderer = AVSampleBufferVideoRenderer()
+    var completed = false
+    let attachment = binding.attach(renderer)
+    let completion = Task { @MainActor in
+        await attachment.value
+        completed = true
+    }
+    #expect(await presenterEventually { oldBackend.pendingFlushCount() == 1 })
+    #expect(!completed)
+    #expect(presenter.submit(try presentationFrame(generation: 31, pts: 1)) == .noSurface)
+    oldBackend.completeNextFlush()
+    await completion.value
+    #expect(completed)
+    #expect(presenter.submit(try presentationFrame(generation: 31, pts: 2)) == .accepted)
+    await presenter.waitUntilIdleForTesting()
+
+    let flat = AVSampleBufferDisplayLayer()
+    let returned = binding.attach(flat)
+    binding.detach(renderer)
+    await returned.value
+    await binding.synchronizeThroughCurrentOperations()
+    #expect(presenter.submit(try presentationFrame(generation: 31, pts: 3)) == .accepted)
+    await presenter.waitUntilIdleForTesting()
+
+    let reentered = binding.attach(renderer)
+    binding.detach(flat)
+    await reentered.value
+    await binding.synchronizeThroughCurrentOperations()
+    #expect(presenter.submit(try presentationFrame(generation: 31, pts: 4)) == .accepted)
+    await presenter.waitUntilIdleForTesting()
+    binding.detach(renderer)
+    await binding.synchronizeThroughCurrentOperations()
+    #expect(presenter.submit(try presentationFrame(generation: 31, pts: 5)) == .noSurface)
+}
+
+@Test
+func acceptedFrameObserverSkipsDropsSuspensionAndBackendReplacement() async throws {
+    let presenter = BoundedSampleBufferVideoPresenter()
+    let backend = FakeSampleBufferPresentationBackend(readiness: .backpressure)
+    let values = LockedObservedPresentationFrames()
+    await presenter.attach(backend: backend)
+    try await presenter.activate(generation: 33)
+    await presenter.setFrameObserver(identity: backend.identity) { values.record($0) }
+    #expect(presenter.submit(try presentationFrame(generation: 33, pts: 1)) == .accepted)
+    await presenter.waitUntilIdleForTesting()
+    #expect(values.times().isEmpty)
+    backend.setReadiness(.ready)
+    #expect(presenter.submit(try presentationFrame(generation: 33, pts: 2)) == .accepted)
+    await presenter.waitUntilIdleForTesting()
+    #expect(values.times() == [2])
+    #expect(presenter.submit(try presentationFrame(generation: 32, pts: 3)) == .staleGeneration)
+    #expect(presenter.submit(try presentationFrame(generation: 33, pts: 1)) == .accepted)
+    await presenter.waitUntilIdleForTesting()
+    #expect(values.times() == [2])
+    presenter.setPresentationSuspended(true)
+    #expect(presenter.submit(try presentationFrame(generation: 33, pts: 3)) == .suspended)
+    presenter.setPresentationSuspended(false)
+
+    let replacement = FakeSampleBufferPresentationBackend()
+    await presenter.attach(backend: replacement)
+    // An observer arriving late for the old surface cannot watch a new one.
+    await presenter.setFrameObserver(identity: backend.identity) { values.record($0) }
+    #expect(presenter.submit(try presentationFrame(generation: 33, pts: 4)) == .accepted)
+    await presenter.waitUntilIdleForTesting()
+    #expect(values.times() == [2])
+    await presenter.setFrameObserver(identity: replacement.identity) { values.record($0) }
+    await presenter.setFrameObserver(identity: backend.identity, handler: nil)
+    #expect(presenter.submit(try presentationFrame(generation: 33, pts: 5)) == .accepted)
+    await presenter.waitUntilIdleForTesting()
+    #expect(values.times() == [2, 5])
+    await presenter.setFrameObserver(identity: replacement.identity, handler: nil)
+    #expect(presenter.submit(try presentationFrame(generation: 33, pts: 6)) == .accepted)
+    await presenter.waitUntilIdleForTesting()
+    #expect(values.times() == [2, 5])
+}
+
+private final class LockedObservedPresentationFrames: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [Int64] = []
+    func record(_ frame: DecodedVideoFrame) { lock.withLock { values.append(frame.presentationTimeStamp.value) } }
+    func times() -> [Int64] { lock.withLock { values } }
+}
+
 final class FakeSampleBufferPresentationBackend:
     SampleBufferPresentationBackend,
     @unchecked Sendable
@@ -936,4 +1028,32 @@ func presenterPacingTreatsALongQuietSpellAsDriftRatherThanJitter() async throws 
     pts = try await causePacedUnderrun(presenter, generation: 1, startingAt: pts)
     #expect(presenter.snapshot().pacingTargetFrames == 4)
     await presenter.deactivate(generation: 1)
+}
+
+@Test
+func sameSessionHandoffKeepsOutgoingImageButStillDrainsAndRejectsStaleDetach() async throws {
+    let presenter = BoundedSampleBufferVideoPresenter()
+    let old = FakeSampleBufferPresentationBackend()
+    let next = FakeSampleBufferPresentationBackend()
+    await presenter.attach(backend: old)
+    try await presenter.activate(generation: 73)
+    #expect(presenter.submit(try presentationFrame(generation: 73, pts: 1)) == .accepted)
+    await presenter.waitUntilIdleForTesting()
+    old.clearFlushHistory()
+    old.delayNextFlush()
+    let transfer = Task { await presenter.attach(backend: next, preservingOutgoingImage: true) }
+    #expect(await presenterEventually { old.pendingFlushCount() == 1 })
+    #expect(old.flushHistory() == [false])
+    #expect(presenter.submit(try presentationFrame(generation: 73, pts: 2)) == .noSurface)
+    old.completeNextFlush()
+    await transfer.value
+    await presenter.detachBackend(identity: old.identity)
+    #expect(presenter.submit(try presentationFrame(generation: 73, pts: 3)) == .accepted)
+    await presenter.waitUntilIdleForTesting()
+    #expect(next.enqueuedPresentationTimes().count == 1)
+    #expect(old.enqueuedPresentationTimes().count == 1)
+    #expect(presenter.snapshot().activeGeneration == 73)
+    #expect(next.everySampleDisplaysImmediately())
+    await presenter.deactivate(generation: 73)
+    #expect(next.flushHistory() == [true], "Ending a session still removes its image")
 }

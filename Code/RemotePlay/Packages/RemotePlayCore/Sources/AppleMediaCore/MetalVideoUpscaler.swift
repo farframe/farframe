@@ -183,6 +183,9 @@ final class MetalVideoUpscaler: @unchecked Sendable {
     // completion threads as well as the delivery queue.
     private let lock = NSLock()
     private var pending: [Job] = []
+    // The same lock publishes Core Video lifetime ownership to completion
+    // threads. Only admitted GPU jobs enter this bounded table.
+    private var retainedTextures: [UInt64: (CVMetalTexture, CVMetalTexture)] = [:]
     private var framesUpscaled: UInt64 = 0
     private var framesPassedThrough: UInt64 = 0
     private var upscaleFailures: UInt64 = 0
@@ -466,13 +469,10 @@ final class MetalVideoUpscaler: @unchecked Sendable {
         // The CVMetalTexture wrappers must outlive the command buffer, so the
         // handler captures them. Releasing them earlier is the classic
         // CVMetalTextureCache corruption bug.
-        let retainedTextures = RetainedTexturePair(input: input.wrapper, output: output.wrapper)
-        commandBuffer.addCompletedHandler { [weak self] buffer in
-            // The CVMetalTexture wrappers must outlive the command buffer.
-            // Releasing them earlier is the classic CVMetalTextureCache
-            // corruption bug, so the handler holds them to completion.
-            retainedTextures.keepAlive()
-            guard let self else { return }
+        lock.withLock { retainedTextures[sequence] = (input.wrapper, output.wrapper) }
+        commandBuffer.addCompletedHandler { [self] buffer in
+            // Keep the owner/cache/wrappers alive until GPU completion even
+            // when the presenter replaces this upscaler in the meantime.
             if let error = buffer.error {
                 finish(
                     sequence: sequence,
@@ -684,6 +684,8 @@ final class MetalVideoUpscaler: @unchecked Sendable {
         gpuMilliseconds: Double? = nil
     ) {
         let ready: [Job] = lock.withLock {
+            // Only finish() for this completed job releases its wrappers.
+            retainedTextures.removeValue(forKey: sequence)
             if let gpuMilliseconds { lastGPUMilliseconds = gpuMilliseconds }
             if countedAsFailure {
                 upscaleFailures &+= 1
@@ -716,23 +718,5 @@ final class MetalVideoUpscaler: @unchecked Sendable {
         deliveryQueue.async {
             for job in ready { job.completion(job.result) }
         }
-    }
-}
-
-/// Carries the two `CVMetalTexture` wrappers into the command buffer's
-/// completion handler, which Metal declares `@Sendable`. The wrappers are only
-/// ever read there to keep them alive; nothing mutates them.
-private final class RetainedTexturePair: @unchecked Sendable {
-    private let input: CVMetalTexture
-    private let output: CVMetalTexture
-
-    init(input: CVMetalTexture, output: CVMetalTexture) {
-        self.input = input
-        self.output = output
-    }
-
-    func keepAlive() {
-        withExtendedLifetime(input) {}
-        withExtendedLifetime(output) {}
     }
 }

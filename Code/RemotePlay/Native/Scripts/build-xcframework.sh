@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE="${TMPDIR:-/tmp}/RemotePlayNative"
-DEVELOPER_DIR_PATH="${DEVELOPER_DIR:-$HOME/Downloads/Xcode.app/Contents/Developer}"
+DEVELOPER_DIR_PATH="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 OFFLINE=0
 
 usage() {
@@ -65,4 +65,4 @@ done
     --workspace "$WORKSPACE" \
     --developer-dir "$DEVELOPER_DIR_PATH"
 
-printf 'NATIVE PIPELINE VERIFIED  Xcode 26.6 / Apple OS 26.0\n'
+printf 'NATIVE PIPELINE VERIFIED  Xcode 27.0 / Apple OS 26.0\n'

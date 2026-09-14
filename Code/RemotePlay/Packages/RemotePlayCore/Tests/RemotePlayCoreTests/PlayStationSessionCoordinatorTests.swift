@@ -1056,7 +1056,7 @@ private final class AlwaysFailingPCMAudioPlaybackBackend:
         self.failuresRemaining = failuresRemaining
     }
 
-    func installRecoveryHandler(_ handler: @escaping @Sendable () -> Void) {
+    func installRecoveryHandler(_ handler: @escaping @Sendable (PCMAudioRecoveryEvent) -> Void) {
         _ = handler
     }
 
@@ -1312,4 +1312,49 @@ private func yieldSeveralTimes() async {
     for _ in 0..<20 {
         await Task.yield()
     }
+}
+
+@Test
+func consoleLoginRequestFailsPromptlyAndSurvivesNormalStop() async throws {
+    let first = FakePlayStationNativeSession(holdJoin: true)
+    let second = FakePlayStationNativeSession()
+    let fixture = try await SessionCoordinatorFixture.make(sessions: [first, second])
+    _ = try await fixture.coordinator.connect(consoleID: fixture.console.id, qualityProfile: .default)
+    await first.emit(.loginRequired)
+    try #require(await eventually { await first.joinCount() == 1 })
+    #expect(await fixture.coordinator.snapshot().lastQuitReason == .consoleLoginRequired)
+    await first.emit(.quit(.normal))
+    await yieldSeveralTimes()
+    await first.releaseJoin()
+    try #require(await eventually { await fixture.coordinator.snapshot().state == .failed })
+    #expect(await fixture.coordinator.snapshot().lastQuitReason == .consoleLoginRequired)
+    #expect(await first.calls() == [.start, .stop, .join])
+    _ = try await fixture.coordinator.connect(consoleID: fixture.console.id, qualityProfile: .default)
+    await first.emit(.loginRequired)
+    await yieldSeveralTimes()
+    #expect(await fixture.coordinator.snapshot().lastQuitReason == nil)
+    #expect(await fixture.coordinator.snapshot().state == .connecting)
+    await fixture.coordinator.disconnect()
+}
+
+@Test
+func connectionStagesDoNotClaimPlaybackAndResetForReplacement() async throws {
+    let first = FakePlayStationNativeSession()
+    let second = FakePlayStationNativeSession()
+    let fixture = try await SessionCoordinatorFixture.make(sessions: [first, second])
+    _ = try await fixture.coordinator.connect(consoleID: fixture.console.id, qualityProfile: .default)
+    await first.emit(.connectionStage(.sessionAccepted))
+    try #require(await eventually { await fixture.coordinator.snapshot().lastConnectionStage == .sessionAccepted })
+    #expect(await fixture.coordinator.snapshot().transportIsReady == false)
+    #expect(await fixture.coordinator.snapshot().state == .connecting)
+    await first.emit(.connectionStage(.requestSent))
+    await yieldSeveralTimes()
+    #expect(await fixture.coordinator.snapshot().lastConnectionStage == .sessionAccepted)
+    await fixture.coordinator.disconnect()
+    #expect(await fixture.coordinator.snapshot().lastConnectionStage == .sessionAccepted)
+    _ = try await fixture.coordinator.connect(consoleID: fixture.console.id, qualityProfile: .default)
+    await first.emit(.connectionStage(.responseMissing))
+    await yieldSeveralTimes()
+    #expect(await fixture.coordinator.snapshot().lastConnectionStage == nil)
+    await fixture.coordinator.disconnect()
 }

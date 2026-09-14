@@ -83,7 +83,7 @@ struct MobilePlayStationPairingView: View {
                     .accessibilityHidden(true)
 
                 VStack(spacing: 8) {
-                    Text("PS5 paired")
+                    Text("Console paired")
                         .font(.title2.bold())
                         .accessibilityAddTraits(.isHeader)
                     Text(name)
@@ -127,7 +127,7 @@ struct MobilePlayStationPairingView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Pair this device with your PS5")
                         .font(.headline)
-                    Text("Three steps, once, on your home Wi-Fi. After that you can play from home or away.")
+                    Text("Pair once on your home network to play at home. Automatic Away Play is not available yet.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if model.localNetworkPreflightCompleted == false {
@@ -142,7 +142,7 @@ struct MobilePlayStationPairingView: View {
                     }
                 }
             } icon: {
-                Image(systemName: "playstation.logo")
+                Image(systemName: "gamecontroller")
                     .foregroundStyle(.blue)
             }
         }
@@ -180,6 +180,7 @@ struct MobilePlayStationPairingView: View {
                 isExpanded: $model.advancedAccountEntryIsExpanded
             ) {
                 TextField("Numeric, base64, or hexadecimal Account ID", text: $model.manualAccountID)
+                    .accessibilityLabel("Remote Play Account ID")
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 TextField("Display name (optional)", text: $model.manualAccountDisplayName)
@@ -204,15 +205,16 @@ struct MobilePlayStationPairingView: View {
     }
 
     private var consoleSection: some View {
-        Section("1. PS5 address") {
-            TextField("PS5 IP address", text: $model.hostAddress)
+        Section("1. Console address") {
+            TextField("Console IP address", text: $model.hostAddress)
+                .accessibilityLabel("Console IP address")
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .keyboardType(.numbersAndPunctuation)
                 .disabled(model.inputsAreEditable == false)
             TextField("Console name (optional)", text: $model.displayName)
                 .disabled(model.inputsAreEditable == false)
-            Text("On PS5: Settings > Network > Connection Status. You can add an Away address later from the console menu.")
+            Text("On your console: Settings > Network > Connection Status. Use its address on your home network.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -221,6 +223,7 @@ struct MobilePlayStationPairingView: View {
     private var linkDeviceSection: some View {
         Section("3. Link Device code") {
             TextField("8-digit code", text: $model.linkDevicePIN)
+                .accessibilityLabel("Eight-digit Link Device code")
                 .keyboardType(.numberPad)
                 .textContentType(.oneTimeCode)
                 .disabled(model.inputsAreEditable == false)

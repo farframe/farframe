@@ -44,17 +44,23 @@ final class VisionSampleBufferDisplayUIView: UIView {
 struct VisionSampleBufferDisplayView: UIViewRepresentable {
     let videoSurface: SampleBufferVideoSurfaceBinding
     let onSurfaceQueued: @MainActor () -> Void
+    let onSurfaceAttached: @MainActor () -> Void
+    let onSurfaceReady: @MainActor () -> Void
 
     init(
         videoSurface: SampleBufferVideoSurfaceBinding,
-        onSurfaceQueued: @escaping @MainActor () -> Void = {}
+        onSurfaceQueued: @escaping @MainActor () -> Void = {},
+        onSurfaceAttached: @escaping @MainActor () -> Void = {},
+        onSurfaceReady: @escaping @MainActor () -> Void = {}
     ) {
         self.videoSurface = videoSurface
         self.onSurfaceQueued = onSurfaceQueued
+        self.onSurfaceAttached = onSurfaceAttached
+        self.onSurfaceReady = onSurfaceReady
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(videoSurface: videoSurface, onSurfaceQueued: onSurfaceQueued)
+        Coordinator(videoSurface: videoSurface, onSurfaceQueued: onSurfaceQueued, onSurfaceAttached: onSurfaceAttached, onSurfaceReady: onSurfaceReady)
     }
 
     func makeUIView(context: Context) -> VisionSampleBufferDisplayUIView {
@@ -89,23 +95,49 @@ struct VisionSampleBufferDisplayView: UIViewRepresentable {
     final class Coordinator {
         private let videoSurface: SampleBufferVideoSurfaceBinding
         private let onSurfaceQueued: @MainActor () -> Void
+        private let onSurfaceAttached: @MainActor () -> Void
+        private let onSurfaceReady: @MainActor () -> Void
+        private var attachmentID: UUID?
 
         init(
             videoSurface: SampleBufferVideoSurfaceBinding,
-            onSurfaceQueued: @escaping @MainActor () -> Void
+            onSurfaceQueued: @escaping @MainActor () -> Void,
+            onSurfaceAttached: @escaping @MainActor () -> Void,
+            onSurfaceReady: @escaping @MainActor () -> Void
         ) {
             self.videoSurface = videoSurface
             self.onSurfaceQueued = onSurfaceQueued
+            self.onSurfaceAttached = onSurfaceAttached
+            self.onSurfaceReady = onSurfaceReady
         }
 
         func attach(_ layer: AVSampleBufferDisplayLayer) {
-            videoSurface.attach(layer)
+            let id = UUID()
+            attachmentID = id
+            let attachment = videoSurface.attach(layer, preservingOutgoingImage: true)
             // The attach operation is now synchronously present in the
             // binding's FIFO. Session Start will wait through that exact work.
             onSurfaceQueued()
+            Task { @MainActor [weak self] in
+                await attachment.value
+                guard let self, self.attachmentID == id else { return }
+                self.onSurfaceAttached()
+                // Attachment only establishes ownership. Apple's display-ready
+                // flag means the first image is actually available to show.
+                // It is NOT KVO-observable; poll only for this bounded transfer.
+                let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+                while self.attachmentID == id, !layer.isReadyForDisplay,
+                      ContinuousClock.now < deadline, !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(25))
+                }
+                guard self.attachmentID == id, layer.isReadyForDisplay,
+                      !Task.isCancelled else { return }
+                self.onSurfaceReady()
+            }
         }
 
         func detach(_ layer: AVSampleBufferDisplayLayer) {
+            attachmentID = nil
             videoSurface.detach(layer)
         }
 

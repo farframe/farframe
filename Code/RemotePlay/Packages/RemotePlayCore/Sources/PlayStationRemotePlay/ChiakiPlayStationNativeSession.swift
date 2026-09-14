@@ -426,6 +426,14 @@ enum ChiakiSessionEventMapping {
         if eventType == Int32(RP_CHIAKI_SESSION_EVENT_TRANSPORT_READY.rawValue) {
             return .transportReady
         }
+        if eventType == Int32(RP_CHIAKI_SESSION_EVENT_LOGIN_REQUIRED.rawValue) {
+            return .loginRequired
+        }
+        if eventType == Int32(RP_CHIAKI_SESSION_EVENT_CONNECTION_STAGE.rawValue) {
+            return PlayStationConnectionStage(rawValue: detailCode).map {
+                .connectionStage($0)
+            }
+        }
         guard eventType == Int32(RP_CHIAKI_SESSION_EVENT_QUIT.rawValue) else {
             return nil
         }

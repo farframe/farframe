@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NATIVE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORKSPACE="${TMPDIR:-/tmp}/RemotePlayNative"
-DEVELOPER_DIR_PATH="${DEVELOPER_DIR:-$HOME/Downloads/Xcode.app/Contents/Developer}"
+DEVELOPER_DIR_PATH="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 
 usage() {
     printf '%s\n' "Usage: $0 [--workspace PATH] [--developer-dir PATH]"

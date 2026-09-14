@@ -64,7 +64,7 @@ int main(void)
 {
     fake_chiaki_runtime_reset();
     const RPChiakiRuntimeInfo runtime = rp_chiaki_runtime_info();
-    REQUIRE(runtime.abi_version == 7u);
+    REQUIRE(runtime.abi_version == 8u);
     REQUIRE((runtime.capability_mask & RP_CHIAKI_CAPABILITY_REGISTER_PS5) != 0);
 
     const uint8_t account_id[RP_CHIAKI_PSN_ACCOUNT_ID_SIZE] = {

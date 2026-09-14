@@ -30,7 +30,7 @@ func providerRegistryRejectsDuplicateProviderIDs() async throws {
 func nativeRuntimeUsesTheOpaqueVerifiedLayout() {
     let info = ChiakiNativeRuntime.info
 
-    #expect(info.abiVersion == 7)
+    #expect(info.abiVersion == 8)
     #expect(info.hasValidSessionLayout)
     #expect(info.supportsPlayStation5Wake)
     #expect(info.supportsPlayStation5Connect)

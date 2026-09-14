@@ -27,7 +27,7 @@ struct FarframeAccountIDHelpView: View {
                 }
 
                 Section("Then finish pairing") {
-                    step(1, "Make sure this device and the PS5 are on the same home Wi-Fi. Pairing works only on the local network; playing does not have that limit.")
+                    step(1, "Connect this device and your console to the same home network. This version supports home-network play.")
                     step(2, "On PS5, open Settings > System > Remote Play > Link Device and leave the eight-digit code on screen.")
                     step(3, "Enter the code in Farframe and tap Pair. The code expires in a few minutes, so request a fresh one if it fails.")
                 }

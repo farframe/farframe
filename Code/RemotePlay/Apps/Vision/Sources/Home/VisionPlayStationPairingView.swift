@@ -104,7 +104,7 @@ struct VisionPlayStationPairingView: View {
                         .foregroundStyle(.secondary)
                 }
             } icon: {
-                Image(systemName: "playstation.logo")
+                Image(systemName: "gamecontroller")
                     .foregroundStyle(.blue)
             }
         }
@@ -112,7 +112,8 @@ struct VisionPlayStationPairingView: View {
 
     private var consoleSection: some View {
         Section("1. Enter your PS5 address") {
-            TextField("PS5 IP address", text: $hostAddress)
+            TextField("Console IP address", text: $hostAddress)
+                .accessibilityLabel("Console IP address")
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .disabled(inputsAreEditable == false)
@@ -164,6 +165,7 @@ struct VisionPlayStationPairingView: View {
     @ViewBuilder
     private var manualAccountFields: some View {
         TextField("Numeric, base64, or hexadecimal Account ID", text: $accountID)
+            .accessibilityLabel("Remote Play Account ID")
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .disabled(inputsAreEditable == false)
@@ -180,6 +182,7 @@ struct VisionPlayStationPairingView: View {
     private var linkDeviceSection: some View {
         Section("3. Link Device code") {
             TextField("8-digit code", text: $linkDevicePIN)
+                .accessibilityLabel("Eight-digit Link Device code")
                 .keyboardType(.numberPad)
                 .disabled(inputsAreEditable == false)
                 .onChange(of: linkDevicePIN) { _, value in

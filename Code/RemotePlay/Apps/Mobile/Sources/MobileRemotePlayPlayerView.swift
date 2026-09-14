@@ -351,7 +351,7 @@ struct MobileRemotePlayPlayerView: View {
                 Section("PlayStation") {
                     Button {
                         Task { await coordinator.goHome() }
-                    } label: { Label("Go to PS5 Home", systemImage: "playstation.logo") }
+                    } label: { Label("Go to PS5 Home", systemImage: "gamecontroller") }
                     .disabled(!isStreaming && !coordinator.remoteDisplayIsBlocked)
                     NavigationLink {
                         MobilePlayerDiagnosticsView(coordinator: coordinator)
@@ -574,7 +574,9 @@ struct MobilePlayerQuickActions: View {
     /// does not depend on knowing the tap-the-picture gesture, and it reaches
     /// the canvas the same way the swipe camera does rather than through a
     /// closure every call site would have to remember to pass.
-    @Environment(\.farframeTogglePlayerChrome) private var toggleChrome
+    @Environment(\.farframePlayerChrome) private var chrome
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var hudNamespace
 
     static let accessibleTargetSize = MobilePlayerGlass.hudTargetSize
@@ -617,7 +619,7 @@ struct MobilePlayerQuickActions: View {
     private var expandedHUD: some View {
         HStack(spacing: 0) {
             HStack(spacing: MobilePlayerGlass.hudPillSpacing) {
-                quickAction("PS Home", symbol: "playstation.logo",
+                quickAction("PS Home", symbol: "gamecontroller",
                             cluster: .leading, perform: goHome)
                 healthAction
             }
@@ -640,7 +642,9 @@ struct MobilePlayerQuickActions: View {
     /// label to aim at, and it is reached one-handed around the edge of a
     /// device whose other side is being held.
     private var collapsedHUD: some View {
-        Button(action: toggleChrome) {
+        Button {
+            chrome?.toggle(voiceOver: voiceOver, reduceMotion: reduceMotion)
+        } label: {
             Image(systemName: "chevron.down")
                 .font(.system(size: 16, weight: .semibold))
                 .frame(width: MobilePlayerGlass.hudHandleSize,

@@ -242,6 +242,10 @@ public final class BoundedSampleBufferVideoPresenter: @unchecked Sendable {
 
     // Presentation-queue-confined state.
     private var backend: (any SampleBufferPresentationBackend)?
+    /// Optional local analysis of frames actually accepted for this backend.
+    /// The callback must return promptly; it cannot wait for GPU work or call
+    /// back synchronously into presenter lifecycle. Replacement clears it.
+    private var frameObserver: (identity: ObjectIdentifier, handler: @Sendable (DecodedVideoFrame) -> Void)?
     private var cachedFormatDescription: CMVideoFormatDescription?
     private var lastPresentationTimeStamp: CMTime?
     private var upscalerBuildInFlight = false
@@ -329,14 +333,50 @@ public final class BoundedSampleBufferVideoPresenter: @unchecked Sendable {
     /// the layer while retaining its background-safe renderer handle, so SwiftUI
     /// view teardown remains authoritative.
     @MainActor
-    public func attach(_ layer: AVSampleBufferDisplayLayer) async {
-        await attach(backend: AVSampleBufferDisplayLayerBackend(layer: layer))
+    public func attach(_ layer: AVSampleBufferDisplayLayer, preservingOutgoingImage: Bool = false) async {
+        await attach(backend: AVSampleBufferDisplayLayerBackend(layer: layer), preservingOutgoingImage: preservingOutgoingImage)
     }
 
     /// A late detach for an old SwiftUI view cannot detach a newer surface.
     @MainActor
     public func detach(_ layer: AVSampleBufferDisplayLayer) async {
         await detachBackend(identity: ObjectIdentifier(layer))
+    }
+
+    /// RealityKit may own a standalone renderer instead of a display layer.
+    /// It replaces the same single backend, through the same flush gate; it
+    /// never creates a second decoder, pacing queue, or frame consumer.
+    @MainActor
+    public func attach(_ renderer: AVSampleBufferVideoRenderer, preservingOutgoingImage: Bool = false) async {
+        await attach(backend: AVStandaloneSampleBufferRendererBackend(renderer: renderer), preservingOutgoingImage: preservingOutgoingImage)
+    }
+
+    @MainActor
+    public func detach(_ renderer: AVSampleBufferVideoRenderer) async {
+        await detachBackend(identity: ObjectIdentifier(renderer))
+    }
+
+    @MainActor
+    public func observePresentedFrames(
+        on renderer: AVSampleBufferVideoRenderer,
+        handler: @escaping @Sendable (DecodedVideoFrame) -> Void
+    ) async {
+        await setFrameObserver(identity: ObjectIdentifier(renderer), handler: handler)
+    }
+
+    @MainActor
+    public func stopObservingPresentedFrames(on renderer: AVSampleBufferVideoRenderer) async {
+        await setFrameObserver(identity: ObjectIdentifier(renderer), handler: nil)
+    }
+
+    func setFrameObserver(
+        identity: ObjectIdentifier,
+        handler: (@Sendable (DecodedVideoFrame) -> Void)?
+    ) async {
+        await performOnPresentationQueue { [self] in
+            guard backend?.identity == identity else { return }
+            frameObserver = handler.map { (identity, $0) }
+        }
     }
 
     /// While the hosting scene is inactive (headset removed, another app's
@@ -668,9 +708,9 @@ public final class BoundedSampleBufferVideoPresenter: @unchecked Sendable {
         pacingPriming = true
     }
 
-    func attach(backend newBackend: any SampleBufferPresentationBackend) async {
+    func attach(backend newBackend: any SampleBufferPresentationBackend, preservingOutgoingImage: Bool = false) async {
         await lifecycleGate.perform { [self] in
-            await replaceBackend(with: newBackend)
+            await replaceBackend(with: newBackend, preservingOutgoingImage: preservingOutgoingImage)
         }
     }
 
@@ -849,6 +889,12 @@ public final class BoundedSampleBufferVideoPresenter: @unchecked Sendable {
         backend.enqueue(sampleBuffer)
         lastPresentationTimeStamp = presentationTimeStamp
         lock.withLock { framesEnqueued &+= 1 }
+        if let observer = frameObserver, observer.identity == backend.identity,
+           lock.withLock({ !presentationSuspended }), isCurrent(work) {
+            // Analyze the original source-sized image, with the same timing,
+            // instead of making an additional copy of any upscaled output.
+            observer.handler(work.frame)
+        }
     }
 
     /// `automatic` runs the pass only while the video is drawn large enough for
@@ -1029,7 +1075,8 @@ public final class BoundedSampleBufferVideoPresenter: @unchecked Sendable {
     }
 
     private func replaceBackend(
-        with newBackend: any SampleBufferPresentationBackend
+        with newBackend: any SampleBufferPresentationBackend,
+        preservingOutgoingImage: Bool
     ) async {
         await withCheckedContinuation { continuation in
             presentationQueue.async { [self] in
@@ -1050,6 +1097,7 @@ public final class BoundedSampleBufferVideoPresenter: @unchecked Sendable {
                     if epoch == 0 { epoch = 1 }
                     return epoch
                 }
+                frameObserver = nil
                 guard let oldBackend = backend else {
                     resetQueueState()
                     backend = newBackend
@@ -1063,7 +1111,10 @@ public final class BoundedSampleBufferVideoPresenter: @unchecked Sendable {
                     return
                 }
 
-                oldBackend.flush(removingDisplayedImage: true) { [self] in
+                // A same-session scene handoff may keep the outgoing picture
+                // visible until its replacement reports readyForDisplay. The
+                // old backend still drains through the same exclusive gate.
+                oldBackend.flush(removingDisplayedImage: !preservingOutgoingImage) { [self] in
                     presentationQueue.async { [self] in
                         resetQueueState()
                         backend = newBackend
@@ -1094,6 +1145,7 @@ public final class BoundedSampleBufferVideoPresenter: @unchecked Sendable {
                     if epoch == 0 { epoch = 1 }
                     return epoch
                 }
+                frameObserver = nil
                 currentBackend.flush(removingDisplayedImage: true) { [self] in
                     presentationQueue.async { [self] in
                         guard backend?.identity == identity else {
@@ -1124,6 +1176,39 @@ public final class BoundedSampleBufferVideoPresenter: @unchecked Sendable {
                 continuation.resume()
             }
         }
+    }
+}
+
+private final class AVStandaloneSampleBufferRendererBackend:
+    SampleBufferPresentationBackend,
+    @unchecked Sendable
+{
+    // The caller retains the material and renderer for its scene lifetime.
+    // Weak ownership makes a missing scene unavailable even before its queued
+    // identity-safe detach runs. Enqueue/flush remain presentation-queue owned.
+    private weak var renderer: AVSampleBufferVideoRenderer?
+    let identity: ObjectIdentifier
+
+    init(renderer: AVSampleBufferVideoRenderer) {
+        self.renderer = renderer
+        identity = ObjectIdentifier(renderer)
+    }
+
+    func readiness() -> SampleBufferPresentationBackendReadiness {
+        guard let renderer else { return .unavailable }
+        if renderer.status == .failed || renderer.requiresFlushToResumeDecoding {
+            return .requiresFlush
+        }
+        return renderer.isReadyForMoreMediaData ? .ready : .backpressure
+    }
+
+    func enqueue(_ sampleBuffer: CMSampleBuffer) {
+        renderer?.enqueue(sampleBuffer)
+    }
+
+    func flush(removingDisplayedImage: Bool, completion: @escaping @Sendable () -> Void) {
+        guard let renderer else { completion(); return }
+        renderer.flush(removingDisplayedImage: removingDisplayedImage, completionHandler: completion)
     }
 }
 

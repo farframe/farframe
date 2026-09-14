@@ -64,7 +64,6 @@ final class VisionRemotePlayCoordinator {
     private enum PreferenceKey {
         static let streamQuality = "PSPlayVision.streamBitrate"
         static let restOnPlayerClose = "PSPlayVision.restOnDisconnect"
-        static let streamHealthHUDEnabled = "PSPlayVision.streamHealthHUDEnabled"
         static let smoothMotionEnabled = "PSPlayVision.smoothMotionEnabled"
         static let controllerFeedbackEnabled = "PSPlayVision.controllerFeedbackEnabled"
         static let videoEnhancement = "PSPlayVision.videoEnhancement"
@@ -78,7 +77,6 @@ final class VisionRemotePlayCoordinator {
         .streamHUD,
         .sleep,
         .disconnect,
-        .psOptions,
         .volume,
     ]
 
@@ -108,6 +106,63 @@ final class VisionRemotePlayCoordinator {
     private var playerSceneWasInterrupted = false
     private var playerWindowOwnerID: UUID?
     private var visibleSetupWindowIDs: Set<UUID> = []
+    #if os(visionOS)
+    private(set) var arenaPresentation = VisionArenaPresentationRoute()
+    private(set) var flatPresentationIsActive = true
+    private(set) var flatPresentationEventID = UUID()
+
+    @discardableResult
+    func recordFlatPresentationActivity(isActive: Bool) -> UUID {
+        flatPresentationIsActive = isActive
+        if isActive, case .returning = arenaPresentation.phase {
+            videoSurface?.setPresentationSuspended(false)
+        }
+        flatPresentationEventID = UUID()
+        return flatPresentationEventID
+    }
+
+    func canHandleFlatActivity(eventID: UUID) -> Bool {
+        arenaPresentation.flatOwnsLifecycle && flatPresentationIsActive && flatPresentationEventID == eventID
+    }
+
+    func beginArenaPresentation() -> VisionArenaPresentationRoute.Ticket? {
+        guard case .streaming = phase, preparedSessionHasStarted,
+              let sessionID = activeSessionID, videoSurface != nil else { return nil }
+        flatPresentationEventID = UUID()
+        return arenaPresentation.begin(sessionID: sessionID)
+    }
+
+    func arenaRendererDidAttach(_ ticket: VisionArenaPresentationRoute.Ticket) -> Bool {
+        guard arenaPresentation.rendererAttached(ticket, activeSessionID: activeSessionID) else { return false }
+        // A four-metre surface has no stable UIKit backing-pixel size. Keep
+        // automatic enhancement at source size until headset GPU evidence.
+        videoSurface?.setDisplayPixelSize(width: 1_920, height: 1_080)
+        return true
+    }
+
+    func beginArenaReturn(_ ticket: VisionArenaPresentationRoute.Ticket) -> Bool {
+        arenaPresentation.beginReturn(ticket, activeSessionID: activeSessionID)
+    }
+
+    func arenaFlatSurfaceDidAttach(sessionID: UUID, revision: UInt64) {
+        guard activeSessionID == sessionID,
+              arenaPresentation.flatRevision == revision,
+              case .returning = arenaPresentation.phase else { return }
+        // A newly attached renderer has already passed the flush barrier.
+        // Do not flush it again for the outgoing scene's transient inactivity.
+        playerSceneWasInterrupted = false
+        if flatPresentationIsActive { videoSurface?.setPresentationSuspended(false) }
+    }
+
+    func cancelArenaReturn(_ ticket: VisionArenaPresentationRoute.Ticket) -> Bool {
+        arenaPresentation.cancelReturn(ticket, activeSessionID: activeSessionID)
+    }
+
+    func arenaFlatSurfaceDidDisplay(sessionID: UUID, revision: UInt64) {
+        guard activeSessionID == sessionID else { return }
+        _ = arenaPresentation.flatAttached(sessionID: sessionID, revision: revision)
+    }
+    #endif
 
     private(set) var phase: VisionRemotePlayPhase = .loading
     private(set) var consoles: [SavedPlayStationConsole] = []
@@ -151,11 +206,8 @@ final class VisionRemotePlayCoordinator {
         }
     }
 
-    var streamHealthHUDEnabled: Bool {
-        didSet {
-            defaults.set(streamHealthHUDEnabled, forKey: PreferenceKey.streamHealthHUDEnabled)
-        }
-    }
+    // A temporary viewing aid, never an automatic overlay on the next launch.
+    var streamHealthHUDEnabled = false
 
     /// Holds a few frames so bursty Wi-Fi does not stutter; about 50 ms of
     /// added latency. Applies immediately to the live session.
@@ -239,9 +291,6 @@ final class VisionRemotePlayCoordinator {
         )
         self.controllerSource = AppleGameControllerSource()
 
-        self.streamHealthHUDEnabled = defaults.bool(
-            forKey: PreferenceKey.streamHealthHUDEnabled
-        )
         self.smoothMotionEnabled = defaults.object(forKey: PreferenceKey.smoothMotionEnabled) == nil
             ? true
             : defaults.bool(forKey: PreferenceKey.smoothMotionEnabled)
@@ -260,7 +309,10 @@ final class VisionRemotePlayCoordinator {
         let supportedPinnedControls = rawPinnedControls
             .compactMap(VisionPlayerControlID.init(rawValue:))
             .filter { seenPinnedControls.insert($0).inserted }
-        self.pinnedPlayerControlIDs = supportedPinnedControls.isEmpty
+        let previousDefault: [VisionPlayerControlID] = [
+            .psMenu, .showMain, .streamHUD, .sleep, .disconnect, .psOptions, .volume
+        ]
+        self.pinnedPlayerControlIDs = supportedPinnedControls.isEmpty || supportedPinnedControls == previousDefault
             ? Self.defaultPinnedPlayerControls
             : supportedPinnedControls
 
@@ -371,6 +423,7 @@ final class VisionRemotePlayCoordinator {
                 throw VisionRemotePlayCoordinatorError.invalidSessionType
             }
 
+            streamHealthHUDEnabled = false
             activeSession = session
             await session.setControllerFeedbackHandler { [controllerFeedbackSink] _, feedback in
                 controllerFeedbackSink.apply(feedback)
@@ -456,11 +509,23 @@ final class VisionRemotePlayCoordinator {
                   activeSessionID == session.id,
                   phase == .connecting(consoleID) else { return }
             connectionTimeoutTask = nil
+            let snapshot = await session.snapshot()
+            guard activeSessionID == session.id, phase == .connecting(consoleID),
+                  Task.isCancelled == false else { return }
+            let stage = snapshot.lastConnectionStage?.summary ?? "Starting the connection"
             #if DEBUG
-            print("[FARFRAME Session] connect timed out after \(Self.connectionTimeoutSeconds)s; tearing down")
+            print("[FARFRAME Session] connect timed out after \(Self.connectionTimeoutSeconds)s; stage=\(stage), transport=\(snapshot.transportIsReady), decodedFrame=\(snapshot.firstDecodedFrameSeen), audioUnavailable=\(snapshot.audioIsUnavailable); tearing down")
             #endif
-            await cancelConnection()
-            phase = .failed(VisionRemotePlayCoordinatorError.connectionTimedOut.localizedDescription)
+            let timeoutOperationID = claimLocalSessionOperation()
+            cancelSessionTasks()
+            phase = .disconnecting
+            await session.stop()
+            guard localSessionOperationIsCurrent(timeoutOperationID, sessionID: session.id) else { return }
+            clearSessionState()
+            let message = snapshot.transportIsReady
+                ? "Connected, but no playable video arrived. Try Connect again."
+                : "The connection timed out. Last step: \(stage). Check the console and network, then try again."
+            phase = .failed(snapshot.lastQuitReason.map(\.explanation.message) ?? message)
         }
         connectionTask = Task { [weak self, session] in
             do {
@@ -524,6 +589,15 @@ final class VisionRemotePlayCoordinator {
         phase = .ready
     }
 
+    func playerWindowClosed(ifSessionMatches sessionID: UUID) async {
+        guard VisionPlayerLifecycle.shouldClose(expectedSession: sessionID,
+            activeSession: activeSessionID, replacementWindowIsPresent: playerWindowOwnerID != nil) else { return }
+        #if os(visionOS)
+        guard arenaPresentation.flatOwnsLifecycle else { return }
+        #endif
+        await playerWindowClosed()
+    }
+
     func playerWindowClosed() async {
         if restOnPlayerClose {
             await restAndDisconnect()
@@ -539,6 +613,7 @@ final class VisionRemotePlayCoordinator {
     /// submission stops until the scene is active again.
     func playerSceneBecameNonActive() {
         playerSceneBecameInactive()
+        if activeSession != nil, preparedSessionHasStarted { playerSceneWasInterrupted = true }
         videoSurface?.setPresentationSuspended(true)
         scheduleBackgroundDisconnect()
     }
@@ -569,9 +644,8 @@ final class VisionRemotePlayCoordinator {
     /// the player go black for the whole length of a screen recording.
     func playerSceneBecameInactive() {
         playerSceneIsActive = false
+        activeSession?.audioControls.reconcilePlayback(isForeground: false)
         pendingPreparedSessionAuthorizationID = nil
-        guard activeSession != nil, preparedSessionHasStarted else { return }
-        playerSceneWasInterrupted = true
     }
 
     /// Reconciles the presentation surface exactly once when a previously
@@ -582,6 +656,7 @@ final class VisionRemotePlayCoordinator {
     func playerSceneBecameActive() async
         -> VisionPreparedSessionStartAuthorization? {
         playerSceneIsActive = true
+        activeSession?.audioControls.reconcilePlayback(isForeground: true)
         backgroundDisconnectTask?.cancel()
         backgroundDisconnectTask = nil
         videoSurface?.setPresentationSuspended(false)
@@ -618,6 +693,8 @@ final class VisionRemotePlayCoordinator {
             pinnedPlayerControlIDs.removeAll { $0 == id }
         }
     }
+
+    func restoreAudioPlayback() { activeSession?.audioControls.restorePlayback() }
 
     func playerDiagnosticsSnapshot() -> VisionPlayerDiagnostics? {
         guard let session = activeSession else { return nil }
@@ -657,6 +734,9 @@ final class VisionRemotePlayCoordinator {
     func playerWindowDidDisappear(_ instanceID: UUID) -> Bool {
         guard playerWindowOwnerID == instanceID else { return false }
         playerWindowOwnerID = nil
+        #if os(visionOS)
+        guard arenaPresentation.flatOwnsLifecycle else { return false }
+        #endif
         return true
     }
 
@@ -891,6 +971,7 @@ final class VisionRemotePlayCoordinator {
                       Task.isCancelled == false,
                       self.activeSessionID == session.id,
                       self.localSessionOperationID == nil else { return }
+                session.audioControls.reconcilePlayback(isForeground: self.playerSceneIsActive)
                 self.remoteDisplayIsBlocked = snapshot.displayIsBlocked
                 switch snapshot.state {
                 case .streaming:
@@ -933,6 +1014,10 @@ final class VisionRemotePlayCoordinator {
     }
 
     private func clearSessionState() {
+        #if os(visionOS)
+        arenaPresentation.invalidate()
+        flatPresentationEventID = UUID()
+        #endif
         // A rumble held when the stream ends would otherwise run forever.
         controllerFeedbackSink.stopAll()
         cancelSessionTasks()

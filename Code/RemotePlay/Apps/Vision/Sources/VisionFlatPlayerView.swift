@@ -4,13 +4,19 @@ import SwiftUI
 struct VisionFlatPlayerView: View {
     let videoSurface: SampleBufferVideoSurfaceBinding
     let onSurfaceQueued: @MainActor () -> Void
+    let onSurfaceAttached: @MainActor () -> Void
+    let onSurfaceReady: @MainActor () -> Void
 
     init(
         videoSurface: SampleBufferVideoSurfaceBinding,
-        onSurfaceQueued: @escaping @MainActor () -> Void = {}
+        onSurfaceQueued: @escaping @MainActor () -> Void = {},
+        onSurfaceAttached: @escaping @MainActor () -> Void = {},
+        onSurfaceReady: @escaping @MainActor () -> Void = {}
     ) {
         self.videoSurface = videoSurface
         self.onSurfaceQueued = onSurfaceQueued
+        self.onSurfaceAttached = onSurfaceAttached
+        self.onSurfaceReady = onSurfaceReady
     }
 
     var body: some View {
@@ -18,7 +24,9 @@ struct VisionFlatPlayerView: View {
             Color.black
             VisionSampleBufferDisplayView(
                 videoSurface: videoSurface,
-                onSurfaceQueued: onSurfaceQueued
+                onSurfaceQueued: onSurfaceQueued,
+                onSurfaceAttached: onSurfaceAttached,
+                onSurfaceReady: onSurfaceReady
             )
                 // A replacement provider session owns a different FIFO binding.
                 // Force a new UIView/coordinator instead of reusing the old layer.

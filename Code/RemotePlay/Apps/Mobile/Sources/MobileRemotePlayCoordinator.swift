@@ -499,6 +499,20 @@ final class MobileRemotePlayCoordinator {
         let operationID = beginLifecycleOperation()
         clearWakeStatus()
         phase = .waking(consoleID)
+        // DNS/native delivery may outlast its caller. Release only this UI
+        // operation at the deadline; any later completion fails the same
+        // generation checks as Cancel. This cannot recall an already sent UDP
+        // packet and must never claim that the console acknowledged Wake.
+        let timeout = dependencies.wakeRequestTimeout
+        let deadline = Task { [weak self] in
+            do { try await Task.sleep(for: timeout) } catch { return }
+            guard let self, isCurrentLifecycleOperation(operationID),
+                  phase == .waking(consoleID), !wakeRequestWasSent else { return }
+            finishLifecycleOperation(operationID)
+            clearWakeStatus()
+            phase = .failed("Wake took too long. Check your connection and try again.")
+        }
+        defer { deadline.cancel() }
         do {
             try await dependencies.wake(consoleID)
             try Task.checkCancellation()
@@ -506,6 +520,7 @@ final class MobileRemotePlayCoordinator {
                   phase == .waking(consoleID),
                   activeSession == nil else { return }
             // UDP completion is not an acknowledgement from the console.
+            deadline.cancel()
             wakeRequestWasSent = true
             wakeStatusMessage = "Wake request sent. Console readiness is not confirmed. Try Connect when your PS5 is ready."
             try await dependencies.waitForWakeSettling()

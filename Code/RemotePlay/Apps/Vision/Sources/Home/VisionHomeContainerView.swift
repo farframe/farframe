@@ -32,8 +32,18 @@ struct VisionHomeContainerView: View {
     @AppStorage(FarframePlayStyleOnboarding.hasBeenAskedKey)
     private var playStyleWasAsked = false
 
+    private var reviewPhase: FarframeReviewSessionPhase {
+        switch coordinator.phase {
+        case .ready: .home
+        case .streaming: .streaming
+        case .disconnecting: .ending
+        default: .other
+        }
+    }
+
     var body: some View {
         VisionHomeView(state: homeState, send: handle)
+            .farframeReviewPrompt(phase: reviewPhase, unobstructed: pairingTarget == nil && addressesTarget == nil && consolePendingRemoval == nil && !accessIsPresented && !settingsArePresented && !whatsNewIsPresented && !playStyleOnboardingIsPresented)
             .task {
                 await coordinator.prepare()
             }

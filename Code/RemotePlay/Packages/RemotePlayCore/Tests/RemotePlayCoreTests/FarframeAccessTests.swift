@@ -528,3 +528,41 @@ private struct FarframeStoreKitProductFixture: Decodable {
     let type: String
     let familyShareable: Bool
 }
+
+
+@MainActor
+@Test
+func immersiveRequiresAnActiveVerifiedTrialOrCurrentLifetime() async {
+    let clock = MutableFarframeDate(farframeReferenceDate.addingTimeInterval(10))
+    let trial = record(FarframeProductID.trial, at: farframeReferenceDate)
+    let store = FarframeAccessStore(
+        entitlementSnapshotLoader: { loadResult(current: [trial], history: [trial]) },
+        nowProvider: { clock.value }
+    )
+    #expect(!store.allowsImmersive)
+    #expect(await store.revalidateImmersiveAccess())
+    clock.value = farframeReferenceDate.addingTimeInterval(FarframeAccessPolicy.trialDuration)
+    #expect(!store.allowsImmersive, "Expiry denies access before the asynchronous timer refresh")
+    #expect(await store.revalidateImmersiveAccess() == false)
+
+    let unavailable = FarframeAccessStore { loadResult(current: [], history: []) }
+    #expect(await unavailable.revalidateImmersiveAccess() == false)
+    #expect(unavailable.verifiedState == .trialEligible)
+}
+
+@MainActor
+@Test(arguments: [FarframeLifetimeOwnership.purchased, .familyShared])
+func immersiveLifetimeIsRemovedWhenOnlyHistoryRemains(ownership: FarframeLifetimeOwnership) async {
+    let source = ControlledFarframeEntitlementLoader()
+    let store = FarframeAccessStore { await source.load() }
+    let lifetime = record(FarframeProductID.lifetime, at: farframeReferenceDate, ownership: ownership)
+    let first = Task { await store.revalidateImmersiveAccess() }
+    await source.waitUntilStarted(0)
+    _ = await source.complete(0, with: loadResult(current: [lifetime], history: [lifetime]))
+    #expect(await first.value)
+    let revoked = Task { await store.revalidateImmersiveAccess() }
+    await source.waitUntilStarted(1)
+    _ = await source.complete(1, with: loadResult(current: [], history: [lifetime]))
+    #expect(await revoked.value == false)
+    #expect(!store.allowsImmersive)
+}

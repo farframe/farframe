@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NATIVE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORKSPACE="${TMPDIR:-/tmp}/RemotePlayNative"
-DEVELOPER_DIR_PATH="${DEVELOPER_DIR:-$HOME/Downloads/Xcode.app/Contents/Developer}"
+DEVELOPER_DIR_PATH="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 OUTPUT="$NATIVE_ROOT/../Packages/RemotePlayCore/Binaries/ChiakiNative.xcframework"
 
 usage() {
@@ -40,9 +40,9 @@ done
 export DEVELOPER_DIR="$DEVELOPER_DIR_PATH"
 actual_xcode="$(xcodebuild -version | tr '\n' ' ')"
 case "$actual_xcode" in
-    *"Xcode 26.6"*"17F113"*) ;;
+    *"Xcode 27.0"*"27A266a"*) ;;
     *)
-        printf 'Expected Xcode 26.6 (17F113), found %s\n' "$actual_xcode" >&2
+        printf 'Expected Xcode 27.0 (27A266a), found %s\n' "$actual_xcode" >&2
         exit 69
         ;;
 esac

@@ -370,9 +370,9 @@ static int verify_exact_configuration_and_callbacks(
 
     REQUIRE(record->log != NULL);
     REQUIRE(record->log->initialized == 1);
-    REQUIRE(record->log->level_mask == CHIAKI_LOG_ERROR);
+    REQUIRE(record->log->level_mask == (CHIAKI_LOG_ERROR | CHIAKI_LOG_INFO));
     REQUIRE(record->log->callback != NULL);
-    REQUIRE(record->log->user == NULL);
+    REQUIRE(record->log->user == handle);
     REQUIRE(record->callback_install_calls == 1);
     REQUIRE(record->callback_mask_calls == 1);
     REQUIRE(record->callback_mask == 0x1f);
@@ -484,7 +484,27 @@ static int verify_exact_configuration_and_callbacks(
         record_index,
         CHIAKI_EVENT_LOGIN_PIN_REQUEST,
         CHIAKI_QUIT_REASON_NONE));
+    REQUIRE(observer->call_count == 1);
+    REQUIRE(observer->event_types[0] == RP_CHIAKI_SESSION_EVENT_LOGIN_REQUIRED);
+    REQUIRE(observer->detail_codes[0] == 0);
+    observer->call_count = 0;
+
+    /* The log bridge must fail closed: private text, appended payloads and
+     * unknown messages never reach Swift. Only exact startup literals map. */
+    REQUIRE(record->log->level_mask == (CHIAKI_LOG_ERROR | CHIAKI_LOG_INFO));
+    record->log->callback(CHIAKI_LOG_INFO, "RP-Registkey: PRIVATE-TEST-SENTINEL", record->log->user);
+    record->log->callback(CHIAKI_LOG_INFO, "Session request successful PRIVATE-TEST-SENTINEL", record->log->user);
+    record->log->callback(CHIAKI_LOG_ERROR, "unknown diagnostic", record->log->user);
+    record->log->callback(CHIAKI_LOG_INFO, NULL, record->log->user);
     REQUIRE(observer->call_count == 0);
+    record->log->callback(CHIAKI_LOG_INFO, "Session request successful", record->log->user);
+    REQUIRE(observer->call_count == 1);
+    REQUIRE(observer->event_types[0] == RP_CHIAKI_SESSION_EVENT_CONNECTION_STAGE);
+    REQUIRE(observer->detail_codes[0] == RP_CHIAKI_CONNECTION_SESSION_ACCEPTED);
+    record->log->callback(CHIAKI_LOG_ERROR, "Failed to receive session request response", record->log->user);
+    REQUIRE(observer->call_count == 2);
+    REQUIRE(observer->detail_codes[1] == RP_CHIAKI_CONNECTION_RESPONSE_MISSING);
+    observer->call_count = 0;
     REQUIRE(fake_chiaki_emit_event(
         record_index,
         CHIAKI_EVENT_CONNECTED,

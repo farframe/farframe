@@ -36,11 +36,11 @@ need it to build and run your own copy.
 
 ## Build it yourself
 
-The next Vision build requires visionOS 27.0 and Xcode 27.0 (currently tested
-with beta build `27A5252f`). Mobile and Mac retain their OS 26.0 minimum. Use
-Xcode 26.6 (build `17F113`) for the native runtime, Mobile, Mac and shared tests,
-then select Xcode 27 for the Vision shell. Beta compilation is development
-evidence, not App Store release validation. You also need
+This development candidate uses Xcode27.0 RC (build `27A266a`) and SDK27.0
+for the native library and all three apps. The minimum supported system remains
+26.0 on every platform;27-only effects use availability guards. Compilation
+and simulator tests are development evidence, separate from device tests and
+signed distribution validation. You also need
 [XcodeGen](https://github.com/yonaskolb/XcodeGen),
 CMake, Ninja, and a Python 3 with the `protobuf` module for the native
 reconstruction step. Set `DEVELOPER_DIR` to your Xcode if it is not the

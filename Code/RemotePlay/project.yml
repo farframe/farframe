@@ -2,7 +2,7 @@ name: RemotePlay
 
 options:
   bundleIdPrefix: com.unshackledpursuit.remoteplay
-  xcodeVersion: "26.6"
+  xcodeVersion: "27.0"
   deploymentTarget:
     iOS: "26.0"
     macOS: "26.0"
@@ -17,7 +17,7 @@ configs:
 settings:
   base:
     SWIFT_VERSION: 6.0
-    CURRENT_PROJECT_VERSION: 5
+    CURRENT_PROJECT_VERSION: 15
     MARKETING_VERSION: "1.0"
     ENABLE_USER_SCRIPT_SANDBOXING: true
     ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: true
@@ -36,7 +36,12 @@ targets:
     platform: visionOS
     productName: Farframe
     sources:
-      - Apps/Vision/Sources
+      - path: Apps/Vision/Sources
+        excludes:
+          - ImmersiveArena/VisionArenaExterior*.swift
+      - path: Apps/Vision/Sources/ImmersiveArena
+        includes:
+          - VisionArenaExterior*.swift
       - Apps/Shared/Sources
       - path: Apps/Vision/Resources
       - path: Apps/Shared/Resources/PrivacyInfo.xcprivacy
@@ -66,7 +71,7 @@ targets:
         # Farframe keeps one stable identity for preferences, Keychain-backed
         # console registrations, and the cross-platform App Store record.
         PRODUCT_BUNDLE_IDENTIFIER: com.unshackledpursuit.remoteplay.vision
-        MARKETING_VERSION: "1.1"
+        MARKETING_VERSION: "1.2"
         PRODUCT_NAME: Farframe
         GENERATE_INFOPLIST_FILE: true
         # App/system name. Designed brand assets may use the FARFRAME wordmark.
@@ -118,7 +123,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.unshackledpursuit.remoteplay.vision
         PRODUCT_NAME: Farframe
         PRODUCT_MODULE_NAME: RemotePlayMobile
-        MARKETING_VERSION: "1.0"
+        MARKETING_VERSION: "1.1"
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_CFBundleDisplayName: Farframe
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false
@@ -170,7 +175,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.unshackledpursuit.remoteplay.vision
         PRODUCT_NAME: Farframe
         PRODUCT_MODULE_NAME: RemotePlayMac
-        MARKETING_VERSION: "1.0"
+        MARKETING_VERSION: "1.1"
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_CFBundleDisplayName: Farframe
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false

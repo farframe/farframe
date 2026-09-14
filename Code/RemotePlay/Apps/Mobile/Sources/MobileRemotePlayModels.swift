@@ -306,6 +306,7 @@ struct MobileRemotePlayDependencies: Sendable {
     let pairing: MobilePlayStationPairingDependencies
     let monitorInterval: Duration
     let controllerDeliveryInterval: Duration
+    let wakeRequestTimeout: Duration
     let waitForWakeSettling: @Sendable () async throws -> Void
     let connectionNetworkSnapshot: @Sendable () -> MobileConnectionNetworkSnapshot
     /// Production supplies the shared web sign-in so the root view can present
@@ -323,6 +324,7 @@ struct MobileRemotePlayDependencies: Sendable {
         pairing: MobilePlayStationPairingDependencies = .unavailable,
         monitorInterval: Duration = .milliseconds(100),
         controllerDeliveryInterval: Duration = .nanoseconds(8_333_333),
+        wakeRequestTimeout: Duration = .seconds(10),
         waitForWakeSettling: @escaping @Sendable () async throws -> Void = {
             try await Task.sleep(for: .seconds(4))
         },
@@ -336,6 +338,7 @@ struct MobileRemotePlayDependencies: Sendable {
         self.pairing = pairing
         self.monitorInterval = monitorInterval
         self.controllerDeliveryInterval = controllerDeliveryInterval
+        self.wakeRequestTimeout = wakeRequestTimeout
         self.waitForWakeSettling = waitForWakeSettling
         self.connectionNetworkSnapshot = connectionNetworkSnapshot
     }

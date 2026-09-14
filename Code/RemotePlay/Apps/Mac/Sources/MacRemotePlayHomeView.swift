@@ -37,7 +37,7 @@ struct MacRemotePlayHomeView: View {
                 Text("FARFRAME")
                     .font(.title2.weight(.bold))
                     .tracking(1.8)
-                Text("Your PS5, on your Mac.")
+                Text("Console play on your home network.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -51,7 +51,12 @@ struct MacRemotePlayHomeView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Farframe for Apple Vision Pro, Mac, iPad, and iPhone")
+                .accessibilityLabel("Available now on visionOS. Working on iOS, iPadOS, and macOS.")
+
+                Text("Available now on visionOS. Working on iOS, iPadOS, and macOS.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 0)
@@ -72,7 +77,7 @@ struct MacRemotePlayHomeView: View {
             Button {
                 onShowAccess()
             } label: {
-                Text("Manage Pro")
+                Text("Manage Access")
             }
             .buttonStyle(.link)
             .fixedSize()
@@ -96,7 +101,7 @@ struct MacRemotePlayHomeView: View {
         case .recoveryRequired(let message):
             if let recovery = coordinator.registrationRecovery {
                 messageCard(
-                    title: "Finish pairing your PS5",
+                    title: "Finish console pairing",
                     detail: message,
                     symbol: "exclamationmark.shield.fill",
                     tint: .orange,
@@ -107,7 +112,7 @@ struct MacRemotePlayHomeView: View {
                 )
             } else {
                 messageCard(
-                    title: "Finish pairing your PS5",
+                    title: "Finish console pairing",
                     detail: message,
                     symbol: "exclamationmark.shield.fill",
                     tint: .orange,
@@ -119,7 +124,7 @@ struct MacRemotePlayHomeView: View {
         case .waking(let consoleID):
             statusCard(
                 title: coordinator.wakeRequestWasSent
-                    ? "Waiting briefly for PS5"
+                    ? "Waiting briefly for your console"
                     : "Sending wake request",
                 detail: coordinator.wakeStatusMessage
                     ?? "Sending a request to \(consoleName(consoleID)) at its saved address.",
@@ -174,7 +179,7 @@ struct MacRemotePlayHomeView: View {
     }
 
     private var connectionGuidance: String {
-        "Farframe connects directly to the address saved for this route. At home, use the Home route on your Wi-Fi. Away from home, first configure access to your home network separately, then add the reachable PS5 address from the console menu and choose Away. Farframe does not provide a VPN. To switch devices, Disconnect on the other device without Rest, then connect here."
+        "Connect on the same home network as your console. Automatic Away Play is not available yet. To switch devices, Disconnect on the other device without Rest, then connect here."
     }
 
     @ViewBuilder
@@ -184,12 +189,12 @@ struct MacRemotePlayHomeView: View {
         } else if coordinator.consoles.isEmpty {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .top, spacing: 14) {
-                    Image(systemName: "playstation.logo")
+                    Image(systemName: "gamecontroller")
                         .font(.title2)
                         .foregroundStyle(.blue)
                         .frame(width: 40, height: 40)
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("Let’s connect your PS5")
+                        Text("Connect your console")
                             .font(.title3.weight(.semibold))
                         Text("Pair your console to start playing on this Mac.")
                             .font(.subheadline)
@@ -221,12 +226,12 @@ struct MacRemotePlayHomeView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Your consoles")
                             .font(.title2.weight(.semibold))
-                        Text("Choose a PS5 to start playing.")
+                        Text("Choose a console to start playing.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Pair another PS5", action: onPair)
+                    Button("Pair Another", action: onPair)
                         .buttonStyle(.glass)
                         .disabled(coordinator.canPresentPairing == false)
                 }
@@ -240,7 +245,7 @@ struct MacRemotePlayHomeView: View {
 
     private func consoleCard(_ console: MacConsoleSummary) -> some View {
         HStack(spacing: 18) {
-            Image(systemName: "playstation.logo")
+            Image(systemName: "gamecontroller")
                 .font(.title)
                 .foregroundStyle(.blue)
                 .frame(width: 52, height: 52)
@@ -327,6 +332,7 @@ struct MacRemotePlayHomeView: View {
                 Image(systemName: "ellipsis.circle")
             }
             .menuStyle(.borderlessButton)
+            .accessibilityLabel("Console options for \(console.name)")
             .disabled(coordinator.canPresentPairing == false)
         }
         .padding(18)
@@ -384,6 +390,6 @@ struct MacRemotePlayHomeView: View {
     }
 
     private func consoleName(_ id: UUID) -> String {
-        coordinator.consoles.first(where: { $0.id == id })?.name ?? "your PS5"
+        coordinator.consoles.first(where: { $0.id == id })?.name ?? "your console"
     }
 }

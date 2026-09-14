@@ -328,12 +328,231 @@ private struct RenderedAudioSamples: Sendable {
     let right: [Float]
 }
 
+@Test
+func boundedPCMAudioFailedRecoveryCanResumeWithoutReconnecting() async throws {
+    let backend = FakePCMAudioPlaybackBackend()
+    let player = BoundedPCMAudioPlayer(backend: backend, jitterConfiguration: playerJitterConfiguration)
+    try await player.activate(generation: 12)
+    #expect(player.configure(try stereoFormat(), generation: 12) == .accepted)
+    backend.failNextActivation()
+    backend.triggerRecovery()
+    #expect(await audioEventually { player.snapshot().state == .failed })
+    backend.triggerRecovery()
+    #expect(await audioEventually { player.snapshot().state == .playing })
+    #expect(player.snapshot().activeGeneration == 12)
+    #expect(player.snapshot().negotiatedFormat == (try stereoFormat()))
+    await player.deactivate(generation: 12)
+    backend.triggerRecovery()
+    #expect(player.snapshot().state == .inactive)
+}
+
+@Test
+func boundedPCMAudioMediaResetWaitsForUserAndPreservesMute() async throws {
+    let backend = FakePCMAudioPlaybackBackend()
+    let player = BoundedPCMAudioPlayer(backend: backend, jitterConfiguration: playerJitterConfiguration)
+    try await player.activate(generation: 13)
+    let controls = player.makeControls()
+    controls.setMuted(true)
+    backend.triggerRecovery(.mediaServicesReset)
+    #expect(await audioEventually { player.snapshot().state == .failed })
+    backend.triggerRecovery()
+    #expect(player.snapshot().state == .failed)
+    controls.restorePlayback()
+    #expect(await audioEventually { player.snapshot().state == .playing })
+    #expect(backend.activationVolumes().last == 0)
+    #expect(player.snapshot().activeGeneration == 13)
+    await player.deactivate(generation: 13)
+    controls.restorePlayback()
+    #expect(player.snapshot().state == .inactive)
+}
+
+@Test
+func boundedPCMAudioInterruptionDefersRoutesAndResumesOnlyWhenPermitted() async throws {
+    let backend = FakePCMAudioPlaybackBackend()
+    let player = BoundedPCMAudioPlayer(backend: backend, jitterConfiguration: playerJitterConfiguration)
+    let controls = player.makeControls()
+    try await player.activate(generation: 20)
+    controls.setVolume(0.3)
+    backend.triggerRecovery(.interruptionBegan)
+    #expect(await audioEventually { backend.stopCount() > 0 })
+    backend.triggerRecovery()
+    controls.reconcilePlayback(isForeground: true)
+    #expect(backend.activationCount() == 1)
+    backend.triggerRecovery(.interruptionEnded(shouldResume: true))
+    #expect(await audioEventually { player.snapshot().state == .playing })
+    #expect(backend.activationCount() == 2)
+    #expect(backend.lastVolume() == 0.3)
+
+    backend.triggerRecovery(.interruptionBegan)
+    backend.triggerRecovery(.interruptionEnded(shouldResume: false))
+    controls.reconcilePlayback(isForeground: false)
+    controls.reconcilePlayback(isForeground: true)
+    backend.triggerRecovery()
+    #expect(player.snapshot().state == .failed)
+    #expect(backend.activationCount() == 2)
+    controls.restorePlayback()
+    #expect(await audioEventually { player.snapshot().state == .playing })
+    #expect(backend.activationCount() == 3)
+    await player.deactivate(generation: 20)
+}
+
+@Test
+func boundedPCMAudioBackgroundFailureRetriesOnReturnWithoutNewNotification() async throws {
+    let clock = LockedAudioClock(now: 1_000_000_000)
+    let backend = FakePCMAudioPlaybackBackend()
+    let player = BoundedPCMAudioPlayer(backend: backend, uptimeNanoseconds: { clock.now() })
+    let controls = player.makeControls()
+    try await player.activate(generation: 21)
+    #expect(player.configure(try stereoFormat(), generation: 21) == .accepted)
+    controls.setMuted(true)
+    controls.reconcilePlayback(isForeground: false)
+    backend.triggerRecovery()
+    #expect(backend.activationCount() == 1)
+    backend.failNextActivation()
+    controls.reconcilePlayback(isForeground: true)
+    #expect(await audioEventually { player.snapshot().state == .failed })
+    clock.advance(seconds: 1)
+    controls.reconcilePlayback(isForeground: true)
+    #expect(await audioEventually { player.snapshot().state == .playing })
+    #expect(backend.activationCount() == 3)
+    #expect(backend.lastVolume() == 0)
+    #expect(player.snapshot().negotiatedFormat == (try stereoFormat()))
+    #expect(player.snapshot().activeGeneration == 21)
+    await player.deactivate(generation: 21)
+}
+
+@Test
+func boundedPCMAudioFailedOutputRetriesAreBoundedAndStopWithSession() async throws {
+    let clock = LockedAudioClock(now: 1_000_000_000)
+    let backend = FakePCMAudioPlaybackBackend()
+    let player = BoundedPCMAudioPlayer(backend: backend, uptimeNanoseconds: { clock.now() })
+    let controls = player.makeControls()
+    try await player.activate(generation: 22)
+    backend.failNextActivation()
+    backend.triggerRecovery()
+    #expect(await audioEventually { player.snapshot().state == .failed })
+    for expectedCount in 3...5 {
+        backend.failNextActivation()
+        clock.advance(seconds: 1)
+        controls.reconcilePlayback(isForeground: true)
+        #expect(await audioEventually {
+            backend.activationCount() == expectedCount && player.snapshot().state == .failed
+        })
+    }
+    for _ in 0..<20 {
+        clock.advance(seconds: 1)
+        controls.reconcilePlayback(isForeground: true)
+    }
+    #expect(backend.activationCount() == 5)
+    controls.restorePlayback()
+    #expect(await audioEventually { player.snapshot().state == .playing })
+    #expect(backend.activationCount() == 6)
+    await player.deactivate(generation: 22)
+    controls.reconcilePlayback(isForeground: false)
+    controls.reconcilePlayback(isForeground: true)
+    backend.triggerRecovery(.interruptionEnded(shouldResume: true))
+    #expect(backend.activationCount() == 6)
+    #expect(player.snapshot().state == .inactive)
+}
+
+@Test
+func boundedPCMAudioDetectsStalledHardwareWithFreshInput() async throws {
+    let clock = LockedAudioClock(now: 1_000_000_000)
+    let backend = FakePCMAudioPlaybackBackend()
+    let player = BoundedPCMAudioPlayer(backend: backend, uptimeNanoseconds: { clock.now() })
+    let controls = player.makeControls()
+    try await player.activate(generation: 23)
+    #expect(player.configure(try stereoFormat(), generation: 23) == .accepted)
+    controls.reconcilePlayback(isForeground: true)
+    clock.advance(seconds: 2)
+    #expect(player.admit(try clockedAudioBlock(clock), generation: 23) == .accepted)
+    controls.reconcilePlayback(isForeground: true)
+    #expect(await audioEventually { backend.activationCount() == 2 && player.snapshot().state == .playing })
+    #expect(player.snapshot().activeGeneration == 23)
+    // The replacement backend can actually consume PCM, not just report Playing.
+    for _ in 0..<10 { _ = player.admit(try clockedAudioBlock(clock), generation: 23) }
+    #expect(backend.pull(frameCount: 480).left.count == 480)
+    #expect(player.snapshot().queue.renderedBuffers == 1)
+    await player.deactivate(generation: 23)
+}
+
+@Test
+func boundedPCMAudioDoesNotRestartHealthyMutedOrNetworkStarvedOutput() async throws {
+    for scenario in 0..<3 {
+        let clock = LockedAudioClock(now: 1_000_000_000)
+        let backend = FakePCMAudioPlaybackBackend()
+        let player = BoundedPCMAudioPlayer(backend: backend, uptimeNanoseconds: { clock.now() })
+        let controls = player.makeControls()
+        try await player.activate(generation: 24)
+        #expect(player.configure(try stereoFormat(), generation: 24) == .accepted)
+        controls.setMuted(scenario == 1)
+        controls.reconcilePlayback(isForeground: true)
+        for _ in 0..<8 {
+            clock.advance(seconds: 2)
+            if scenario != 2 {
+                for _ in 0..<5 { _ = player.admit(try clockedAudioBlock(clock), generation: 24) }
+                if scenario == 0 { _ = backend.pull(frameCount: 480) }
+            }
+            controls.reconcilePlayback(isForeground: true)
+        }
+        #expect(backend.activationCount() == 1)
+        #expect(player.snapshot().recoveries == 0)
+        await player.deactivate(generation: 24)
+    }
+}
+
+@Test
+func boundedPCMAudioForegroundDoesNotBypassMediaResetEvenAfterResumableInterruption() async throws {
+    let backend = FakePCMAudioPlaybackBackend()
+    let player = BoundedPCMAudioPlayer(backend: backend)
+    let controls = player.makeControls()
+    try await player.activate(generation: 25)
+    backend.triggerRecovery(.mediaServicesReset)
+    backend.triggerRecovery(.interruptionBegan)
+    backend.triggerRecovery(.interruptionEnded(shouldResume: true))
+    for _ in 0..<5 {
+        controls.reconcilePlayback(isForeground: false)
+        controls.reconcilePlayback(isForeground: true)
+    }
+    #expect(backend.activationCount() == 1)
+    #expect(player.snapshot().state == .failed)
+    controls.restorePlayback()
+    #expect(await audioEventually { player.snapshot().state == .playing })
+    #expect(backend.activationCount() == 2)
+    await player.deactivate(generation: 25)
+}
+
+@Test
+func boundedPCMAudioInterruptionDuringRebuildCannotCommitOrRestartWhileInterrupted() async throws {
+    let backend = FakePCMAudioPlaybackBackend()
+    let player = BoundedPCMAudioPlayer(backend: backend)
+    try await player.activate(generation: 26)
+    backend.blockNextActivation()
+    backend.triggerRecovery()
+    #expect(await audioEventually { backend.activationIsBlocked() })
+    backend.triggerRecovery(.interruptionBegan)
+    backend.releaseBlockedActivation()
+    #expect(await audioEventually { backend.stopCount() >= 2 && !backend.activationIsBlocked() })
+    #expect(player.snapshot().state == .failed)
+    player.makeControls().reconcilePlayback(isForeground: true)
+    #expect(backend.activationCount() == 2)
+    backend.triggerRecovery(.interruptionEnded(shouldResume: true))
+    #expect(await audioEventually { player.snapshot().state == .playing })
+    #expect(backend.activationCount() == 3)
+    await player.deactivate(generation: 26)
+}
+
+private func clockedAudioBlock(_ clock: LockedAudioClock) throws -> InterleavedS16PCMBlock {
+    try pcmBlock(samples: Array(repeating: 800, count: 960), frameCount: 480,
+                 channels: 2, receivedUptimeNanoseconds: clock.now())
+}
+
 private struct FakeAudioBackendError: Error, Sendable {}
 
 private final class FakePCMAudioPlaybackBackend: PCMAudioPlaybackBackend, @unchecked Sendable {
     private let lock = NSLock()
     private let activationRelease = DispatchSemaphore(value: 0)
-    private var recoveryHandler: (@Sendable () -> Void)?
+    private var recoveryHandler: (@Sendable (PCMAudioRecoveryEvent) -> Void)?
     private var activationFailuresRemaining: Int
     private var activations = 0
     private var activationVolumeValues: [Float] = []
@@ -347,7 +566,7 @@ private final class FakePCMAudioPlaybackBackend: PCMAudioPlaybackBackend, @unche
         self.activationFailuresRemaining = activationFailuresRemaining
     }
 
-    func installRecoveryHandler(_ handler: @escaping @Sendable () -> Void) {
+    func installRecoveryHandler(_ handler: @escaping @Sendable (PCMAudioRecoveryEvent) -> Void) {
         lock.withLock { recoveryHandler = handler }
     }
 
@@ -411,6 +630,8 @@ private final class FakePCMAudioPlaybackBackend: PCMAudioPlaybackBackend, @unche
         return RenderedAudioSamples(left: left, right: right)
     }
 
+    func failNextActivation() { lock.withLock { activationFailuresRemaining = 1 } }
+
     func blockNextActivation() {
         lock.withLock { shouldBlockNextActivation = true }
     }
@@ -423,8 +644,8 @@ private final class FakePCMAudioPlaybackBackend: PCMAudioPlaybackBackend, @unche
         lock.withLock { activationBlocked }
     }
 
-    func triggerRecovery() {
-        lock.withLock { recoveryHandler }?()
+    func triggerRecovery(_ event: PCMAudioRecoveryEvent = .configurationChanged) {
+        lock.withLock { recoveryHandler }?(event)
     }
 
     func activationCount() -> Int {
@@ -454,6 +675,10 @@ private final class LockedAudioClock: @unchecked Sendable {
 
     func now() -> UInt64 {
         lock.withLock { value }
+    }
+
+    func advance(seconds: UInt64) {
+        lock.withLock { value += seconds * 1_000_000_000 }
     }
 }
 

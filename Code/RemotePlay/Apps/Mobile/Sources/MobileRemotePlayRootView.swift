@@ -42,6 +42,15 @@ struct MobileRemotePlayRootView: View {
     @AppStorage(FarframePlayStyleOnboarding.hasBeenAskedKey)
     private var playStyleWasAsked = false
 
+    private var reviewPhase: FarframeReviewSessionPhase {
+        switch coordinator.phase {
+        case .ready: .home
+        case .streaming: .streaming
+        case .disconnecting: .ending
+        default: .other
+        }
+    }
+
     var body: some View {
         TabView(selection: $selection) {
             Tab("Play", systemImage: "play.rectangle.fill", value: .play) {
@@ -90,6 +99,7 @@ struct MobileRemotePlayRootView: View {
             paywalledConsoleID = consoleID
             paywallIsPresented = true
         }
+        .farframeReviewPrompt(phase: reviewPhase, unobstructed: selection == .play && pairingTarget == nil && addressesTarget == nil && consolePendingRemoval == nil && !paywallIsPresented && !playStyleOnboardingIsPresented)
         .task {
             await coordinator.prepare()
             await accessStore.prepare()
@@ -167,7 +177,7 @@ struct MobileRemotePlayRootView: View {
                 .presentationSizing(.page)
         }
         .confirmationDialog(
-            "Remove this PS5 from this device?",
+            "Remove this console from this device?",
             isPresented: Binding(
                 get: { consolePendingRemoval != nil },
                 set: { if $0 == false { consolePendingRemoval = nil } }
