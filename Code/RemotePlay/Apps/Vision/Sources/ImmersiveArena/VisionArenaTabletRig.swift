@@ -22,7 +22,7 @@ final class VisionArenaControlsLauncherRig {
         let forward = simd_length_squared(delta) > 0.01 ? simd_normalize(delta) : SIMD3<Float>(0, 0, -1)
         var right = simd_cross(forward, SIMD3<Float>(0, 1, 0))
         if simd_length_squared(right) < 0.01 { right = [1, 0, 0] }
-        launcher.position = viewer + forward * 1.4 + simd_normalize(right) * 0.9 + [0, -0.25, 0]
+        launcher.position = viewer + forward * 1.4 + simd_normalize(right) * 1.1 + [0, -0.15, 0]
     }
     func unmount() { launcher?.removeFromParent(); launcher = nil }
 }

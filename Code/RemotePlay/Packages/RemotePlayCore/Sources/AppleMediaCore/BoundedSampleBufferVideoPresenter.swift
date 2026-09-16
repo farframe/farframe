@@ -369,6 +369,20 @@ public final class BoundedSampleBufferVideoPresenter: @unchecked Sendable {
         await setFrameObserver(identity: ObjectIdentifier(renderer), handler: nil)
     }
 
+    // Same backend-identity guard for the ordinary window presenter.
+    @MainActor
+    public func observePresentedFrames(
+        on layer: AVSampleBufferDisplayLayer,
+        handler: @escaping @Sendable (DecodedVideoFrame) -> Void
+    ) async {
+        await setFrameObserver(identity: ObjectIdentifier(layer), handler: handler)
+    }
+
+    @MainActor
+    public func stopObservingPresentedFrames(on layer: AVSampleBufferDisplayLayer) async {
+        await setFrameObserver(identity: ObjectIdentifier(layer), handler: nil)
+    }
+
     func setFrameObserver(
         identity: ObjectIdentifier,
         handler: (@Sendable (DecodedVideoFrame) -> Void)?

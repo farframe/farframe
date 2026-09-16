@@ -7,9 +7,11 @@ NATIVE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORKSPACE="${TMPDIR:-/tmp}/RemotePlayNative"
 DEVELOPER_DIR_PATH="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 VARIANT=""
+EXPERIMENTAL_SYSTEM_TRUST=0
 
 usage() {
     printf '%s\n' "Usage: $0 --variant NAME [--workspace PATH] [--developer-dir PATH]"
+    printf '%s\n' "       $0 --variant macos-arm64 --experimental-system-trust [--workspace PATH] [--developer-dir PATH]"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -25,6 +27,10 @@ while [ "$#" -gt 0 ]; do
         --developer-dir)
             DEVELOPER_DIR_PATH="$2"
             shift 2
+            ;;
+        --experimental-system-trust)
+            EXPERIMENTAL_SYSTEM_TRUST=1
+            shift
             ;;
         -h|--help)
             usage
@@ -54,6 +60,12 @@ case "$VARIANT" in
         usage >&2
         exit 64 ;;
 esac
+
+# Isolated TLS proof only. Refuse other platforms before deleting build trees.
+if [ "$EXPERIMENTAL_SYSTEM_TRUST" -eq 1 ] && [ "$VARIANT" != "macos-arm64" ]; then
+    printf '%s\n' "--experimental-system-trust is a macos-arm64 isolated TLS proof only; refused for variant $VARIANT." >&2
+    exit 64
+fi
 
 export DEVELOPER_DIR="$DEVELOPER_DIR_PATH"
 MIN_OS=26.0
@@ -141,6 +153,24 @@ build_and_install opus "$SOURCES/dependencies/opus" \
 export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"
 export PKG_CONFIG_SYSROOT_DIR=""
 
+# Default curl TLS remains mbedTLS. The macos-arm64 proof may switch only
+# curl's backend to Secure Transport; Chiaki crypto and RUDP stay unchanged.
+curl_use_sectransp=OFF
+curl_use_mbedtls=ON
+if [ "$EXPERIMENTAL_SYSTEM_TRUST" -eq 1 ]; then
+    curl_use_sectransp=ON
+    curl_use_mbedtls=OFF
+    # The cross-build searches only its dependency prefix. Resolve Apple
+    # frameworks from this selected SDK, never the host or another platform.
+    proof_sdk_path="$(xcrun --sdk "$SDK" --show-sdk-path)"
+    COMMON_CMAKE_ARGS+=(
+        "-DSECURITY_FRAMEWORK:FILEPATH=$proof_sdk_path/System/Library/Frameworks/Security.framework"
+        "-DCOREFOUNDATION_FRAMEWORK:FILEPATH=$proof_sdk_path/System/Library/Frameworks/CoreFoundation.framework"
+        "-DCORESERVICES_FRAMEWORK:FILEPATH=$proof_sdk_path/System/Library/Frameworks/CoreServices.framework"
+    )
+    printf '%s\n' "ISOLATED TLS PROOF candidate: curl Secure Transport on macos-arm64. Chiaki mbedtls crypto unchanged. RUDP off. Not a production TLS backend."
+fi
+
 CHIAKI_BUILD="$VARIANT_ROOT/chiaki-ng"
 cmake -S "$SOURCES/chiaki-ng" -B "$CHIAKI_BUILD" \
     "${COMMON_CMAKE_ARGS[@]}" \
@@ -169,9 +199,9 @@ cmake -S "$SOURCES/chiaki-ng" -B "$CHIAKI_BUILD" \
     -DMBEDCRYPTO="$PREFIX/lib/libmbedcrypto.a" \
     -DOpus_INCLUDE_DIRS="$PREFIX/include/opus" \
     -DOpus_LIBRARIES="$PREFIX/lib/libopus.a" \
-    -DCURL_USE_SECTRANSP=OFF \
+    -DCURL_USE_SECTRANSP="$curl_use_sectransp" \
     -DCURL_USE_OPENSSL=OFF \
-    -DCURL_USE_MBEDTLS=ON \
+    -DCURL_USE_MBEDTLS="$curl_use_mbedtls" \
     -DMBEDTLS_INCLUDE_DIR="$PREFIX/include" \
     -DMBEDTLS_LIBRARY="$PREFIX/lib/libmbedtls.a" \
     -DMBEDX509_LIBRARY="$PREFIX/lib/libmbedx509.a" \
@@ -226,3 +256,6 @@ rm -rf "$OUTPUT/include/chiaki"
 shasum -a 256 "$OUTPUT/libChiakiNative.a" > "$OUTPUT/libChiakiNative.sha256"
 
 printf 'BUILD VERIFIED  %s -> %s\n' "$VARIANT" "$OUTPUT/libChiakiNative.a"
+if [ "$EXPERIMENTAL_SYSTEM_TRUST" -eq 1 ]; then
+    printf '%s\n' "ISOLATED TLS PROOF CANDIDATE (not a production TLS backend, not Away-ready)"
+fi

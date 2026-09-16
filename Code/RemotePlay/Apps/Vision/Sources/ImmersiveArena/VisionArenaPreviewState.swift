@@ -13,6 +13,8 @@ import UIKit
 @MainActor
 @Observable
 final class VisionArenaPreviewState {
+    let mixedLighting: VisionMixedLightingState
+    @ObservationIgnored private let defaults: UserDefaults
     static let controlsWindowID = "farframe-arena-controls"
     enum ControlsCommand: Equatable { case exitRoom, endSession(rest: Bool) }
     var controlsCommand: ControlsCommand?
@@ -27,7 +29,18 @@ final class VisionArenaPreviewState {
     private(set) var entryAttemptID = UUID()
     @ObservationIgnored private var automaticPreviewAttempted = false
     let exterior = VisionArenaExteriorController(loader: VisionArenaExteriorFactory.make)
-    var glow: VisionArenaGlow = .low
+    var glow: VisionArenaGlow = .low {
+        didSet { defaults.set(glow.rawValue, forKey: "farframe.vision.arena.glow") }
+    }
+    var lightCoverage: VisionArenaLightCoverage = .screen {
+        didSet { defaults.set(lightCoverage.rawValue, forKey: "farframe.vision.arena.lightCoverage") }
+    }
+    var pillarGlow = false {
+        didSet { defaults.set(pillarGlow, forKey: "farframe.vision.arena.pillarGlow") }
+    }
+    private(set) var wrapAvailable = false
+    @ObservationIgnored private var wrapRig: VisionArenaWrapRig?
+    @ObservationIgnored private var appliedCoverage: VisionArenaLightCoverage = .screen
     var movable = false
     var partialImmersion = false
     var immersionStyle: ImmersionStyle = .full
@@ -35,20 +48,27 @@ final class VisionArenaPreviewState {
     private var distanceAdjustment: (transform: Transform, viewer: SIMD3<Float>)?
     private var alignedEntry = false
     private var roomYaw: Float = 0
-    private(set) var selectedPreset: VisionArenaScreenPlacement.Preset? = .seated
+    private(set) var selectedPreset: VisionArenaScreenPlacement.Preset? = .cinema
     var keepFacingViewer = true
     let savedScreens: VisionArenaSavedScreens
     private(set) var selectedSavedScreenID: UUID?
     var screenSaveMessage: String?
 
     init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        mixedLighting = VisionMixedLightingState(defaults: defaults)
+        glow = defaults.string(forKey: "farframe.vision.arena.glow")
+            .flatMap(VisionArenaGlow.init(rawValue:)) ?? .low
+        lightCoverage = defaults.string(forKey: "farframe.vision.arena.lightCoverage")
+            .flatMap(VisionArenaLightCoverage.init(rawValue:)) ?? .screen
+        pillarGlow = defaults.bool(forKey: "farframe.vision.arena.pillarGlow")
         savedScreens = VisionArenaSavedScreens(defaults: defaults)
     }
     @ObservationIgnored private let trackingSession = ARKitSession()
     @ObservationIgnored private var worldTracking: WorldTrackingProvider?
     @ObservationIgnored private var lastViewerPosition = SIMD3<Float>(0, 1.15, 0)
     @ObservationIgnored private var preparedMount: Mount?
-    var placement = VisionArenaScreenPlacement()
+    var placement = VisionArenaScreenPlacement.Preset.cinema.placement
     @ObservationIgnored private var videoMaterialIsInstalled = false
     @ObservationIgnored private var roomPrepared = false
     var isActive = true
@@ -117,6 +137,9 @@ final class VisionArenaPreviewState {
         appliedOpacity = nil
         videoMaterialIsInstalled = false
         roomPrepared = false
+        wrapRig = nil
+        wrapAvailable = false
+        appliedCoverage = .screen
         statusMessage = "Loading the room…"
 
         let root = Entity()
@@ -203,6 +226,18 @@ final class VisionArenaPreviewState {
             root.findEntity(named: "ArenaFallbackFloor")?.removeFromParent()
             statusMessage = texturesAvailable ? nil : "The room is ready. Its screen lighting could not load."
 
+            // Prepare once while the flat player still owns presentation. Failure
+            // keeps the original architecture; stale loads never attach a rig.
+            if let url = Bundle.main.url(forResource: "FarframeArenaWrap", withExtension: "usdz"),
+               let asset = try? await Entity(contentsOf: url) {
+                guard isCurrent(root, generation: requestedGeneration) else { return }
+                if let rig = VisionArenaWrapRig(asset: asset, room: room) {
+                    root.addChild(rig.root)
+                    wrapRig = rig
+                    wrapAvailable = true
+                    applyGlow()
+                }
+            }
             await loadOptionalLighting(into: root, generation: requestedGeneration)
             await exterior.finishLoading()
         } catch {
@@ -235,9 +270,9 @@ final class VisionArenaPreviewState {
     func applyPlacement() {
         guard let sceneRoot else { return }
         if let manualPlacement {
-            VisionArenaScreenRig.applyDisplayTransform(manualPlacement, in: sceneRoot)
+            VisionArenaScreenRig.applyDisplayTransform(manualPlacement, in: sceneRoot, coverage: appliedCoverage)
         } else {
-            VisionArenaScreenRig.applyPlacement(placement, in: sceneRoot)
+            VisionArenaScreenRig.applyPlacement(placement, in: sceneRoot, coverage: appliedCoverage)
         }
         VisionArenaScreenRig.setMovable(movable, in: sceneRoot)
     }
@@ -248,13 +283,15 @@ final class VisionArenaPreviewState {
         selectedPreset = preset
         selectedSavedScreenID = nil
         placement = preset.placement
-        if preset == .cinema {
+        if let distance = preset.viewingDistance {
             let p = preset.placement
             let viewer = viewerPosition()
+            let rise = p.height - viewer.y
+            let depth = sqrt(max(0.09, distance * distance - rise * rise))
             manualPlacement = VisionArenaScreenRig.boundedTransform(Transform(
                 scale: .init(repeating: p.scale),
                 rotation: simd_quatf(angle: p.tilt * .pi / 180, axis: [1, 0, 0]),
-                translation: viewer + [0, p.height - 1.15, -p.distance]))
+                translation: [viewer.x, p.height, viewer.z - depth]))
         }
         movable = false
         applyPlacement()
@@ -347,7 +384,7 @@ final class VisionArenaPreviewState {
             selectedPreset = nil
             selectedSavedScreenID = nil
         }
-        VisionArenaScreenRig.applyDisplayTransform(transform, in: sceneRoot)
+        VisionArenaScreenRig.applyDisplayTransform(transform, in: sceneRoot, coverage: appliedCoverage)
     }
 
     @discardableResult func saveScreen(named name: String) -> Bool {
@@ -405,6 +442,19 @@ final class VisionArenaPreviewState {
         // arrives the live masks remain invisible, including after resumption.
         let glowIsActive = canUseReactiveLighting && (!isLiveMode || liveColors != nil)
         let opacity = glowIsActive ? glow.opacity : 0
+        let coverage: VisionArenaLightCoverage = glowIsActive && wrapAvailable ? lightCoverage : .screen
+        // Preview uses the bundled landscape's representative palette only.
+        // Live sessions always use current sampled colors, or black.
+        let previewColors = VisionArenaLiveColorPolicy.EdgeColors(left: [0.02, 0.28, 0.65],
+            right: [0.65, 0.20, 0.025], top: [0.18, 0.025, 0.30], bottom: [0.025, 0.10, 0.15])
+        wrapRig?.update(colors: liveColors ?? (isLiveMode ? .black : previewColors),
+                        intensity: opacity, enabled: coverage == .architecturalWrap, pillarGlow: pillarGlow)
+        VisionArenaScreenRig.setWideGlowEnabled(coverage == .architecturalWrap, in: glowRoot)
+        VisionArenaScreenRig.setWallWashEnabled(coverage == .screen, in: glowRoot)
+        if appliedCoverage != coverage {
+            appliedCoverage = coverage
+            applyPlacement()
+        }
         if forceBloomUpdate || appliedOpacity != opacity {
             VisionArenaBloom.update(in: glowRoot, level: glow, isActive: glowIsActive)
         }
@@ -438,6 +488,9 @@ final class VisionArenaPreviewState {
         sceneRoot?.removeFromParent()
         sceneRoot = nil
         glowRoot = nil
+        wrapRig = nil
+        wrapAvailable = false
+        appliedCoverage = .screen
         appliedOpacity = nil
         statusMessage = nil
         phase = .closed

@@ -12,6 +12,9 @@ targets:
     platform: visionOS
     sources:
       - ArenaRenderHarness.swift
+      - ../../../Apps/Vision/Sources/ImmersiveArena/VisionArenaWrapRig.swift
+      - ../../../Apps/Vision/Sources/ImmersiveArena/VisionArenaWrapPolicy.swift
+      - ../../../Apps/Vision/Sources/ImmersiveArena/VisionArenaCoveragePicker.swift
       - ../../../Apps/Vision/Sources/ImmersiveArena/VisionArenaExteriorStyle.swift
       - ../../../Apps/Vision/Sources/ImmersiveArena/VisionArenaExteriorController.swift
       - ../../../Apps/Vision/Sources/ImmersiveArena/VisionArenaExteriorFactory.swift

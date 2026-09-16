@@ -19,6 +19,12 @@ struct VisionRemotePlayPlayerView: View {
     @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.openWindow) private var openWindow
     @Environment(\.scenePhase) private var scenePhase
+    #if os(visionOS)
+    @Environment(\.physicalMetrics) private var physicalMetrics
+    #endif
+    @State private var controlDock = VisionControlDock.load()
+    @State private var playerSize: CGSize = .zero
+    @State private var recallControls = 0
     @State private var instanceID = UUID()
     @State private var lifecycle = VisionPlayerLifecycle()
     @FocusState private var playerFocused: Bool
@@ -29,6 +35,8 @@ struct VisionRemotePlayPlayerView: View {
                let sessionID = coordinator.activeSessionID {
                 ZStack {
                     flatPresentation(videoSurface: videoSurface, sessionID: sessionID)
+                        .contentShape(Rectangle())
+                        .onTapGesture { recallControls += 1; playerFocused = true }
                     connectionOverlay
 
                     if coordinator.remoteDisplayIsBlocked {
@@ -45,12 +53,35 @@ struct VisionRemotePlayPlayerView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     }
                 }
+                .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+                    playerSize = size
+                    #if os(visionOS)
+                    let width = physicalMetrics.convert(size.width, to: .meters)
+                    let height = physicalMetrics.convert(size.height, to: .meters)
+                    if width.isFinite, height.isFinite, width > 0.2, height > 0.1 {
+                        arenaState?.mixedLighting.windowExtentMeters = SIMD2(Float(width), Float(height))
+                    }
+                    #endif
+                }
+                .onGeometryChange3D(for: Point3D?.self) { proxy in
+                    proxy.frame(in: .immersiveSpace).center
+                } action: { center in
+                    arenaState?.mixedLighting.windowCenter = center
+                }
                 .onGeometryChange3D(for: AffineTransform3D?.self) { proxy in
                     proxy.transform(in: .immersiveSpace)
                 } action: { transform in
                     arenaState?.alignEntry(to: transform)
+                    arenaState?.mixedLighting.windowTransform = transform
                 }
-                .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                .onGeometryChange3D(for: Size3D.self) { proxy in
+                    proxy.frame(in: .immersiveSpace).size
+                } action: { size in
+                    arenaState?.mixedLighting.windowSize = size
+                }
+                .modifier(VisionPlayerAspectRatio(
+                    glowActive: arenaState?.mixedLighting.screenGlowStyle.isActive == true
+                ))
                 .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                 .frame(
                     minWidth: 700,
@@ -80,7 +111,7 @@ struct VisionRemotePlayPlayerView: View {
         .focusable(true)
         .focused($playerFocused)
         .handlesGameControllerEvents(matching: .gamepad)
-        .ornament(attachmentAnchor: .scene(.trailing), contentAlignment: .leading) {
+        .ornament(attachmentAnchor: .scene(controlDock.point), contentAlignment: .center) {
             if coordinator.videoSurface != nil {
                 VisionPlayerControlRail(coordinator: coordinator, accessStore: accessStore,
                     onInteraction: { playerFocused = true }, showHome: showMainWindow,
@@ -93,16 +124,17 @@ struct VisionRemotePlayPlayerView: View {
                     }) {
                     if let arenaState, coordinator.arenaPresentation.flatOwnsLifecycle,
                        case .streaming = coordinator.phase {
-                        VisionArenaPreviewLauncher(state: arenaState, accessStore: accessStore,
-                            coordinator: coordinator)
+                        VisionEnvironmentControl(arena: arenaState, coordinator: coordinator, accessStore: accessStore)
                     }
                 }
+                .configuredDock($controlDock, size: playerSize, recall: recallControls)
             }
         }
         .onAppear {
             coordinator.claimPlayerWindow(instanceID)
             let event = lifecycle.appeared(activity(for: scenePhase))
             reconcileActivity(scenePhase, event: event)
+            arenaState?.mixedLighting.windowActive = scenePhase == .active
             playerFocused = true
         }
         .task(id: hasNoSession) {
@@ -140,6 +172,7 @@ struct VisionRemotePlayPlayerView: View {
             }
         }
         .onChange(of: scenePhase) { _, phase in
+            arenaState?.mixedLighting.windowActive = phase == .active
             reconcileActivity(phase, event: lifecycle.changed(activity(for: phase)))
         }
         #if os(visionOS)
@@ -196,6 +229,7 @@ struct VisionRemotePlayPlayerView: View {
             let revision = coordinator.arenaPresentation.flatRevision
             VisionFlatPlayerView(
                 videoSurface: videoSurface,
+                mixedLighting: arenaState?.mixedLighting,
                 onSurfaceQueued: { authorizePreparedSessionStart(sessionID: sessionID) },
                 onSurfaceAttached: {
                     coordinator.arenaFlatSurfaceDidAttach(sessionID: sessionID, revision: revision)
@@ -346,4 +380,16 @@ struct VisionRemotePlayPlayerView: View {
         openWindow(id: VisionWindowID.setup)
     }
 
+}
+
+private struct VisionPlayerAspectRatio: ViewModifier {
+    var glowActive: Bool
+
+    func body(content: Content) -> some View {
+        if glowActive {
+            content
+        } else {
+            content.aspectRatio(16.0 / 9.0, contentMode: .fit)
+        }
+    }
 }

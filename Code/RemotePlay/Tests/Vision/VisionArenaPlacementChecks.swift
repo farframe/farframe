@@ -7,7 +7,7 @@ import Foundation
         for preset in VisionArenaScreenPlacement.Preset.allCases {
             let p = preset.placement.bounded
             precondition(p == p.bounded)
-            let extent = (1.2 * abs(cos(p.tilt * .pi / 180)) + 0.08) * p.scale
+            let extent = (1.2 * abs(cos(p.tilt * .pi / 180)) + 0.08 * abs(sin(p.tilt * .pi / 180))) * p.scale
             precondition(p.height - extent >= 0.0999)
         }
         precondition(VisionArenaScreenPlacement.Preset.cinema.placement.scale > standard.scale * 1.9)
@@ -23,8 +23,18 @@ import Foundation
             }
         }
         let cinema = VisionArenaScreenPlacement.Preset.cinema.placement.bounded
-        precondition(cinema.scale == 2.1 && cinema.tilt == 8)
-        precondition(abs(hypot(cinema.height - 1.15, cinema.distance) - 12) < 0.001)
+        precondition(cinema.tilt == 8 && cinema.scale == 2.04)
+        let rise = cinema.height - 1.15
+        precondition(abs(sqrt(cinema.distance * cinema.distance + rise * rise)
+            - VisionArenaScreenPlacement.cinemaDistance) < 0.001)
+        for tilt: Float in [-45, 0, 8, 45, 90] {
+            for yaw: Float in [-90, -35, 0, 35, 90] {
+                let p = VisionArenaScreenPlacement(distance: 12, scale: 2.25, yaw: yaw, tilt: tilt).bounded
+                let y = yaw * .pi / 180, t = tilt * .pi / 180
+                let dz = p.scale * (2.1 * abs(sin(y)) + 1.2 * abs(cos(y)*sin(t)) + 0.08 * abs(cos(y)*cos(t)))
+                precondition(p.distance + dz <= VisionArenaScreenPlacement.backClearance + 0.0001)
+            }
+        }
         savedScreenChecks()
         print("Display placement: seated/cinema/reclined/ceiling, clearance, finite bounds and idempotence passed")
     }

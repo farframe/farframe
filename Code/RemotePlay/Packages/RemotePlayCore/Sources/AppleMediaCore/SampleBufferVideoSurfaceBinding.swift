@@ -141,6 +141,30 @@ public final class SampleBufferVideoSurfaceBinding: @unchecked Sendable {
         }
     }
 
+    // Same backend-identity guard for the ordinary window presenter.
+    @MainActor
+    public func observePresentedFrames(
+        on layer: AVSampleBufferDisplayLayer,
+        handler: @escaping @Sendable (DecodedVideoFrame) -> Void
+    ) {
+        let predecessor = operationTail
+        let presenter = self.presenter
+        operationTail = Task { @MainActor in
+            await predecessor?.value
+            await presenter.observePresentedFrames(on: layer, handler: handler)
+        }
+    }
+
+    @MainActor
+    public func stopObservingPresentedFrames(on layer: AVSampleBufferDisplayLayer) {
+        let predecessor = operationTail
+        let presenter = self.presenter
+        operationTail = Task { @MainActor in
+            await predecessor?.value
+            await presenter.stopObservingPresentedFrames(on: layer)
+        }
+    }
+
     public func snapshot() -> SampleBufferVideoPresentationSnapshot {
         presenter.snapshot()
     }

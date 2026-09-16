@@ -2,9 +2,7 @@
 
 Your PS5, on the screen you actually want to use.
 
-Farframe is a native PlayStation Remote Play client for Apple Vision Pro,
-iPhone, iPad, and Mac. One shared engine, three SwiftUI shells, and a stubborn
-set of rules about what stays on your device. It is the app we wanted to exist,
+Farframe is an independent Remote Play client for visionOS. This release contains the Vision app and its required shared engine, with a strict set of rules about what stays on your device. It is the app we wanted to exist,
 so we built it, and because its streaming core descends from the AGPL-licensed
 [chiaki-ng](https://github.com/streetpea/chiaki-ng) project, the complete
 source for every App Store build lives here too.
@@ -36,8 +34,10 @@ need it to build and run your own copy.
 
 ## Build it yourself
 
-This development candidate uses Xcode27.0 RC (build `27A266a`) and SDK27.0
-for the native library and all three apps. The minimum supported system remains
+This snapshot contains only the approved visionOS app target. Shared libraries and native reconstruction inputs are retained; other-platform app targets are not included.
+
+This release uses Xcode27.0 RC (build `27A266a`) and SDK27.0
+for the native library and Vision app. The minimum supported system remains
 26.0 on every platform;27-only effects use availability guards. Compilation
 and simulator tests are development evidence, separate from device tests and
 signed distribution validation. You also need
@@ -68,12 +68,8 @@ default one.
    enabled, because the Data Protection Keychain needs a signed app.
 
    ```sh
-   xcodebuild -project RemotePlay.xcodeproj -scheme RemotePlayMobile \
-     -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
    xcodebuild -project RemotePlay.xcodeproj -scheme RemotePlayVision \
      -destination 'generic/platform=visionOS' CODE_SIGNING_ALLOWED=NO build
-   xcodebuild -project RemotePlay.xcodeproj -scheme RemotePlayMac \
-     -destination 'generic/platform=macOS' CODE_SIGNING_ALLOWED=NO build
    ```
 
 `Code/RemotePlay/Native/README.md` explains the native boundary, patch
@@ -85,8 +81,6 @@ provenance, and the offline-cache option in detail.
 Code/RemotePlay/
 ├── Apps/
 │   ├── Vision/      visionOS shell
-│   ├── Mobile/      adaptive iPhone and iPad shell
-│   ├── Mac/         native macOS shell
 │   └── Shared/      shared resources, notices, and help
 ├── Packages/RemotePlayCore/   Swift packages: provider, media, audio, input,
 │                              security, diagnostics, commerce, and their tests

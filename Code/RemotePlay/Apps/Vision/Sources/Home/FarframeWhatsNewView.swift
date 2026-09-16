@@ -2,11 +2,8 @@ import SwiftUI
 
 enum FarframeWhatsNewContent {
     static let dismissedVersionKey = "farframe.whatsNew.dismissedVersion"
-
-    static var currentReleaseVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-            ?? "1.0"
-    }
+    static let currentReleaseVersion = "1.3"
+    static let contentID = "1.3-ambient-glow-rail"
 }
 
 struct FarframeWhatsNewView: View {
@@ -19,21 +16,21 @@ struct FarframeWhatsNewView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     header
                     featureSection(
-                        title: "Play in your space",
-                        subtitle: "Stream at home on your own network.",
+                        title: "Play at home",
+                        subtitle: "Wake your console, place the screen, and play.",
                         features: [
-                            .init(icon: "play.rectangle.fill", tint: .blue, title: "Your game, in your space", detail: "Wake your console, connect, and place the screen where it feels comfortable."),
-                            .init(icon: "gamecontroller.fill", tint: .green, title: "DualSense controls", detail: "Familiar buttons, with controller status close at hand."),
-                            .init(icon: "waveform", tint: .cyan, title: "Clear, adjustable audio", detail: "Mute with a tap or drag the pinned volume control while the stream keeps the game in focus.")
+                            .init(icon: "play.rectangle.fill", tint: .blue, title: "Your game, in your space", detail: "Wake your console on your home network, connect, and put the screen where it feels comfortable."),
+                            .init(icon: "arrow.up.left.and.arrow.down.right", tint: .cyan, title: "Place and resize freely", detail: "Move the window and make the picture as large or as small as you want."),
+                            .init(icon: "rectangle.landscape.rotate", tint: .mint, title: "Move the controls", detail: "Drag the control rail to any side of the game."),
+                            .init(icon: "gamecontroller.fill", tint: .green, title: "Pair your controller with Vision Pro", detail: "Turn the controller off, hold PS and Create until the light flashes, then choose it in Settings, Bluetooth. Pair it with Vision Pro, not the console.")
                         ]
                     )
                     featureSection(
-                        title: "Built for long sessions",
-                        subtitle: "Farframe keeps controls available without leaving them in the way.",
+                        title: "New in 1.3",
+                        subtitle: "Ambient glow in shared space, plus immersive rooms when you want them.",
                         features: [
-                            .init(icon: "slider.horizontal.3", tint: .purple, title: "Customizable control rail", detail: "Pin the controls you use, let the rail fade while you play, and open Stats when you want a closer look."),
-                            .init(icon: "gauge.with.dots.needle.67percent", tint: .orange, title: "Set up by what you play", detail: "Answer what you're playing and Farframe sets the quality for it, with the resolution, frame rate, and bitrate shown under every option before you choose."),
-                            .init(icon: "power", tint: .mint, title: "Wake, disconnect, or rest", detail: "Leave your console awake or put it in Rest Mode when you finish.")
+                            .init(icon: "sparkles", tint: .purple, title: "Ambient glow in your space", detail: "Color from the game around the window while you stay in shared space. This is the highlight of 1.3."),
+                            .init(icon: "cube.transparent", tint: .orange, title: "Immersive environments", detail: "Mixed and Glass Arena add immersive glow and room options around your game when you want a full environment.")
                         ]
                     )
                 }
@@ -42,8 +39,8 @@ struct FarframeWhatsNewView: View {
             .navigationTitle("What's New")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        dismissedVersion = FarframeWhatsNewContent.currentReleaseVersion
+                    Button("Hide until next update") {
+                        dismissedVersion = FarframeWhatsNewContent.contentID
                         dismiss()
                     }
                 }
@@ -59,7 +56,7 @@ struct FarframeWhatsNewView: View {
                 .foregroundStyle(.cyan)
             Text("Welcome to Farframe")
                 .font(.largeTitle.bold())
-            Text("Bring your PlayStation 5 into your space with a clear screen and familiar controls.")
+            Text("Wake your console, place the screen, and play. Version 1.3 adds ambient glow around the window in your space.")
                 .font(.title3)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

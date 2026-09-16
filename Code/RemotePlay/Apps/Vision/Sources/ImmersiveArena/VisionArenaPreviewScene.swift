@@ -15,6 +15,11 @@ struct VisionArenaPreviewScene: SwiftUI.Scene {
     let accessStore: FarframeAccessStore
 
     var body: some SwiftUI.Scene {
+        ImmersiveSpace(id: VisionMixedLightingState.spaceID) {
+            VisionMixedLightingView(state: state.mixedLighting, coordinator: coordinator, accessStore: accessStore)
+        }
+        .immersionStyle(selection: .constant(.mixed), in: .mixed)
+
         ImmersiveSpace(id: VisionArenaPreviewState.spaceID) {
             VisionArenaPreviewView(state: state, coordinator: coordinator, accessStore: accessStore)
         }
@@ -28,6 +33,8 @@ struct VisionArenaPreviewScene: SwiftUI.Scene {
         .windowStyle(.plain)
         .defaultSize(width: 540, height: 720)
         .windowResizability(.contentSize)
+        // The flat player is closed during immersive playback. Restore the
+        // lower utility placement without depending on that absent window.
         .defaultWindowPlacement { _, _ in WindowPlacement(.utilityPanel) }
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
@@ -41,6 +48,7 @@ struct VisionArenaPreviewLauncher: View {
     @Bindable var state: VisionArenaPreviewState
     let accessStore: FarframeAccessStore
     var coordinator: VisionRemotePlayCoordinator? = nil
+    var showsTitle = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
@@ -52,9 +60,10 @@ struct VisionArenaPreviewLauncher: View {
         Button(action: openRoom) {
             Group {
                 if state.phase == .opening { ProgressView().controlSize(.small) }
+                else if showsTitle { Label("Glass Arena", systemImage: "cube.transparent") }
                 else { Image(systemName: "cube.transparent").font(.title3.weight(.semibold)) }
             }
-            .frame(width: 44, height: 44)
+            .frame(minWidth: 44, minHeight: 44)
         }
         .buttonStyle(.plain)
         .background(.regularMaterial, in: Circle())
@@ -281,6 +290,8 @@ private struct VisionArenaPreviewView: View {
             state.immersionStyle = partial ? .progressive(0.15...1, initialAmount: 0.5) : .full
         }
         .onChange(of: state.glow) { _, _ in state.applyGlow() }
+        .onChange(of: state.lightCoverage) { _, _ in state.applyGlow() }
+        .onChange(of: state.pillarGlow) { _, _ in state.applyGlow() }
         .onChange(of: state.controlsCommand) { _, command in
             guard let command else { return }
             state.controlsCommand = nil
@@ -405,8 +416,9 @@ private struct VisionArenaControlsWindow: View {
             selectPreset: state.selectPreset,
             savedScreens: state.savedScreens.items, selectedSavedScreenID: state.selectedSavedScreenID,
             saveScreen: state.saveScreen, recallScreen: state.recallScreen, removeScreen: state.removeScreen,
-            reset: { state.selectPreset(.seated) }, exit: { state.controlsCommand = .exitRoom }) {
+            reset: { state.selectPreset(.cinema) }, exit: { state.controlsCommand = .exitRoom }) {
             LabeledContent("Environment", value: "Quiet Horizon")
+            VisionArenaCoveragePicker(selection: $state.lightCoverage, pillarGlow: $state.pillarGlow, available: state.wrapAvailable)
             Text("Ambient Glow").font(.subheadline.weight(.semibold))
             Picker("Ambient Glow", selection: $state.glow) {
                 ForEach(VisionArenaGlow.allCases) { level in Text(level.rawValue).tag(level) }

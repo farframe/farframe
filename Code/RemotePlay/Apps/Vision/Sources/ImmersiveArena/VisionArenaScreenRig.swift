@@ -46,35 +46,36 @@ enum VisionArenaScreenRig {
         }
     }
 
-    static func applyPlacement(_ requested: VisionArenaScreenPlacement, in root: Entity) {
+    static func applyPlacement(_ requested: VisionArenaScreenPlacement, in root: Entity, coverage: VisionArenaLightCoverage = .screen) {
         let placement = requested.bounded
         let rotation = simd_quatf(angle: placement.yaw * .pi / 180, axis: [0, 1, 0])
             * simd_quatf(angle: placement.tilt * .pi / 180, axis: [1, 0, 0])
         let center = SIMD3<Float>(placement.horizontal, placement.height, -placement.distance)
         applyDisplayTransform(Transform(scale: .init(repeating: placement.scale), rotation: rotation,
-            translation: center), in: root)
+            translation: center), in: root, coverage: coverage)
     }
 
     /// System manipulation only owns the screen. Companion meshes follow it;
     /// they never add another video surface or transform the architectural room.
-    static func applyDisplayTransform(_ transform: Transform, in root: Entity) {
+    static func applyDisplayTransform(_ transform: Transform, in root: Entity, coverage: VisionArenaLightCoverage = .screen) {
+        let transform = boundedTransform(transform)
         let rotation = transform.rotation
         let center = transform.translation
         let scale = transform.scale.x
         // All authored positions are relative to the original display center.
         // The architectural room remains stationary. Surface washes project
         // from the current screen onto the floor and the two side walls.
-        let names = ["ArenaStaticScreen", "ArenaTightHalo", "ArenaDisplayHousing"]
+        let names = ["ArenaStaticScreen", "ArenaTightHalo", "ArenaWideHalo", "ArenaDisplayHousing"]
         for name in names {
             guard let entity = root.findEntity(named: name) else { continue }
             let offset: SIMD3<Float> = name == "ArenaStaticScreen" ? .zero : -screenPosition
             entity.transform = Transform(scale: .init(repeating: scale), rotation: rotation,
                 translation: center + rotation.act(offset * scale))
         }
-        applySurfaceGlow(transform, in: root)
+        applySurfaceGlow(transform, in: root, coverage: coverage)
     }
 
-    private static func applySurfaceGlow(_ screen: Transform, in root: Entity) {
+    private static func applySurfaceGlow(_ screen: Transform, in root: Entity, coverage: VisionArenaLightCoverage) {
         let center = screen.translation
         let scale = screen.scale.x
         let forward = screen.rotation.act(SIMD3<Float>(0, 0, 1))
@@ -82,15 +83,11 @@ enum VisionArenaScreenRig {
         // Keep the feathered footprint inside the existing room (z -11.8...3.8).
         // At ceiling/reclined angles it stays on the floor; the halo rotates.
         let spread = min(1.4, max(0.5, scale))
-        let halfX = (3 * abs(cos(yaw)) + 2.2 * abs(sin(yaw))) * spread
-        let halfZ = (2.2 * abs(cos(yaw)) + 3 * abs(sin(yaw))) * spread
-        let floorCenter = SIMD3<Float>(
-            min(5.7 - halfX, max(-5.7 + halfX, center.x)), 0.015,
-            min(3.7 - halfZ, max(-11.7 + halfZ, center.z + 1.4 * spread)))
+        let footprint = VisionArenaWrapPolicy.floor(center: center, screenScale: scale, yaw: yaw, coverage: coverage)
         for name in ["ArenaFloorSpill", "ArenaLiveFloor0", "ArenaLiveFloor1"] {
             guard let entity = root.findEntity(named: name) else { continue }
-            entity.transform = Transform(scale: [spread, 1, spread],
-                rotation: simd_quatf(angle: yaw, axis: [0, 1, 0]), translation: floorCenter)
+            entity.transform = Transform(scale: footprint.scale,
+                rotation: simd_quatf(angle: yaw, axis: [0, 1, 0]), translation: footprint.center)
             if name == "ArenaLiveFloor1" { entity.position.y += 0.0005 }
         }
         for (index, names) in [["ArenaLeftWallWash", "ArenaLiveWall0"],
@@ -103,6 +100,25 @@ enum VisionArenaScreenRig {
                         min(5.9 - 1.1 * spread, max(1.1 * spread, center.y)),
                         min(3.7 - 1.8 * spread, max(-11.7 + 1.8 * spread, center.z))])
             }
+        }
+    }
+
+    static func setWideGlowEnabled(_ enabled: Bool, in root: Entity) {
+        root.findEntity(named: "ArenaWideHalo")?.isEnabled = enabled
+    }
+
+    static func setWallWashEnabled(_ enabled: Bool, in root: Entity) {
+        for name in ["ArenaLeftWallWash", "ArenaRightWallWash", "ArenaLiveWall0", "ArenaLiveWall1"] {
+            guard let wall = root.findEntity(named: name) else { continue }
+            let gateName = name + "CoverageGate"
+            let gate: Entity
+            if let existing = root.findEntity(named: gateName) { gate = existing }
+            else {
+                gate = Entity(); gate.name = gateName
+                root.addChild(gate)
+                wall.setParent(gate, preservingWorldTransform: true)
+            }
+            gate.isEnabled = enabled
         }
     }
 
@@ -173,7 +189,8 @@ enum VisionArenaScreenRig {
         let extent = scale * (abs(up.y) * 1.2 + abs(right.y) * 2.1 + abs(forward.y) * 0.08)
         result.translation.x = min(4, max(-4, result.translation.x))
         result.translation.y = min(5.8, max(extent + 0.1, result.translation.y))
-        result.translation.z = min(-0.3, max(-12, result.translation.z))
+        let depth = scale * (abs(up.z) * 1.2 + abs(right.z) * 2.1 + abs(forward.z) * 0.08)
+        result.translation.z = min(-0.3, max(-VisionArenaScreenPlacement.backClearance + depth, result.translation.z))
         return result
     }
 
@@ -243,6 +260,16 @@ enum VisionArenaScreenRig {
             haloRoot.addChild(halo)
             glow.addChild(haloRoot)
 
+            let wideRoot = Entity()
+            wideRoot.name = "ArenaWideHalo"
+            wideRoot.isEnabled = false
+            let wide = ModelEntity(mesh: .generatePlane(width: 6.4, height: 4.65),
+                materials: [try transparentMaterial(images.wideHalo)])
+            wide.name = "ArenaFixtureWideHalo"
+            wide.position = screenPosition + [0, 0, 0.05]
+            wideRoot.addChild(wide)
+            glow.addChild(wideRoot)
+
             let spill = ModelEntity(
                 mesh: .generatePlane(width: 6, depth: 4.4),
                 materials: [try transparentMaterial(images.floor)]
@@ -292,6 +319,18 @@ enum VisionArenaScreenRig {
                 edge.isEnabled = false
                 halo.addChild(edge)
             }
+            let wideRoot = Entity()
+            wideRoot.name = "ArenaWideHalo"
+            wideRoot.isEnabled = false
+            glow.addChild(wideRoot)
+            for index in 0..<4 {
+                let edge = ModelEntity(mesh: .generatePlane(width: 6.4, height: 4.65),
+                    materials: [try transparentMaterial(masks.wideHalo[index])])
+                edge.name = "ArenaLiveWideHalo\(index)"
+                edge.position = screenPosition + [0, 0, 0.05 + Float(index) * 0.002]
+                edge.isEnabled = false
+                wideRoot.addChild(edge)
+            }
             for index in 0..<2 {
                 let floor = ModelEntity(mesh: .generatePlane(width: 6, depth: 4.4),
                     materials: [try transparentMaterial(masks.floor[index])])
@@ -318,7 +357,10 @@ enum VisionArenaScreenRig {
     /// are created once; gameplay image buffers never become reflection planes.
     static func applyLiveColors(_ colors: VisionArenaLiveColorPolicy.EdgeColors, in root: Entity) {
         let edges = [colors.left, colors.right, colors.top, colors.bottom]
-        for index in 0..<4 { tintLiveEntity("ArenaLiveHalo\(index)", color: edges[index], in: root) }
+        for index in 0..<4 {
+            tintLiveEntity("ArenaLiveHalo\(index)", color: edges[index], in: root)
+            tintLiveEntity("ArenaLiveWideHalo\(index)", color: edges[index], in: root)
+        }
         for index in 0..<2 {
             tintLiveEntity("ArenaLiveFloor\(index)", color: edges[index] * 0.35 + colors.bottom * 0.65, in: root)
             tintLiveEntity("ArenaLiveWall\(index)", color: edges[index], in: root)
@@ -368,35 +410,19 @@ private enum ArenaPreviewTextures {
     struct Images: Sendable {
         let screen: CGImage
         let halo: CGImage
+        let wideHalo: CGImage
         let floor: CGImage
         let wall: CGImage
     }
 
     struct LiveMasks: Sendable {
         let halo: [CGImage]
+        let wideHalo: [CGImage]
         let floor: [CGImage]
         let wall: CGImage
     }
 
     static func liveMasks() throws -> LiveMasks {
-        let halos = try (0..<4).map { edge in
-            try image(width: 384, height: 244) { u, v in
-                let x = (u - 0.5) * 4.8
-                let y = (v - 0.5) * 3.05
-                let qx = abs(x) - 1.955
-                let qy = abs(y) - 1.08
-                let distance = hypot(max(qx, 0), max(qy, 0)) + min(max(qx, qy), 0) - 0.045
-                guard distance >= -0.025 else { return .zero }
-                let weights = SIMD4<Float>(
-                    exp(-pow(u / 0.25, 2)), exp(-pow((1 - u) / 0.25, 2)),
-                    exp(-pow(v / 0.25, 2)), exp(-pow((1 - v) / 0.25, 2)))
-                let total = max(weights.x + weights.y + weights.z + weights.w, 0.001)
-                let border = min(min(u, 1 - u), min(v, 1 - v))
-                let alpha = 0.7 * exp(-pow(max(0, distance) / 0.135, 2))
-                    * smoothstep(0, 0.035, border) * weights[edge] / total
-                return SIMD4(1, 1, 1, alpha)
-            }
-        }
         let floors = try (0..<2).map { side in
             try image(width: 256, height: 192) { u, v in
                 let x = (u - 0.5) * 2
@@ -408,12 +434,35 @@ private enum ArenaPreviewTextures {
                 return SIMD4(1, 1, 1, alpha)
             }
         }
-        return try LiveMasks(halo: halos, floor: floors, wall: wallSpill())
+        return try LiveMasks(halo: edgeHalos(wide: false), wideHalo: edgeHalos(wide: true), floor: floors, wall: wallSpill())
+    }
+
+    // Same screen-edge distance field at two radii. The wide tail has lower
+    // opacity and reaches zero at every boundary; it moves with the screen.
+    private static func edgeHalos(wide: Bool) throws -> [CGImage] {
+        try (0..<4).map { edge in
+            try image(width: 384, height: 244) { u, v in
+                let x = (u - 0.5) * (wide ? 6.4 : 4.8)
+                let y = (v - 0.5) * (wide ? 4.65 : 3.05)
+                let qx = abs(x) - 1.955
+                let qy = abs(y) - 1.08
+                let distance = hypot(max(qx, 0), max(qy, 0)) + min(max(qx, qy), 0) - 0.045
+                guard distance >= -0.025 else { return .zero }
+                let weights = SIMD4<Float>(
+                    exp(-pow(u / 0.25, 2)), exp(-pow((1 - u) / 0.25, 2)),
+                    exp(-pow(v / 0.25, 2)), exp(-pow((1 - v) / 0.25, 2)))
+                let total = max(weights.x + weights.y + weights.z + weights.w, 0.001)
+                let border = min(min(u, 1 - u), min(v, 1 - v))
+                let alpha = (wide ? 0.24 : 0.7) * exp(-pow(max(0, distance) / (wide ? 0.55 : 0.135), 2))
+                    * smoothstep(0, 0.035, border) * weights[edge] / total
+                return SIMD4(1, 1, 1, alpha)
+            }
+        }
     }
 
     static func makeImages(screenURL: URL?) throws -> Images {
         let fixture = bundledScreen(at: screenURL)
-        return try Images(screen: fixture ?? screen(), halo: halo(), floor: floorSpill(), wall: wallSpill())
+        return try Images(screen: fixture ?? screen(), halo: halo(), wideHalo: halo(wide: true), floor: floorSpill(), wall: wallSpill())
     }
 
     private static func bundledScreen(at url: URL?) -> CGImage? {
@@ -441,17 +490,17 @@ private enum ArenaPreviewTextures {
         }
     }
 
-    static func halo() throws -> CGImage {
+    static func halo(wide: Bool = false) throws -> CGImage {
         try image(width: 768, height: 488) { u, v in
-            let x = (u - 0.5) * 4.8
-            let y = (v - 0.5) * 3.05
+            let x = (u - 0.5) * (wide ? 6.4 : 4.8)
+            let y = (v - 0.5) * (wide ? 4.65 : 3.05)
             let qx = abs(x) - (2 - 0.045)
             let qy = abs(y) - (1.125 - 0.045)
             let distance = hypot(max(qx, 0), max(qy, 0)) + min(max(qx, qy), 0) - 0.045
             guard distance >= -0.025 else { return .zero }
-            let falloff = exp(-pow(max(0, distance) / 0.135, 2))
+            let falloff = exp(-pow(max(0, distance) / (wide ? 0.55 : 0.135), 2))
             let border = min(min(u, 1 - u), min(v, 1 - v))
-            let alpha = 0.7 * falloff * smoothstep(0, 0.035, border)
+            let alpha = (wide ? 0.24 : 0.7) * falloff * smoothstep(0, 0.035, border)
             let color = edgeColor(x: x / 2, y: -y / 1.125)
             return SIMD4(color.x, color.y, color.z, alpha)
         }

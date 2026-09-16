@@ -42,6 +42,7 @@ final class VisionSampleBufferDisplayUIView: UIView {
 /// A stable, frame-state-free visionOS host whose backing layer is the sample-
 /// buffer display layer. Presentation work stays in AppleMediaCore.
 struct VisionSampleBufferDisplayView: UIViewRepresentable {
+    var mixedLighting: VisionMixedLightingState?
     let videoSurface: SampleBufferVideoSurfaceBinding
     let onSurfaceQueued: @MainActor () -> Void
     let onSurfaceAttached: @MainActor () -> Void
@@ -49,26 +50,27 @@ struct VisionSampleBufferDisplayView: UIViewRepresentable {
 
     init(
         videoSurface: SampleBufferVideoSurfaceBinding,
+        mixedLighting: VisionMixedLightingState? = nil,
         onSurfaceQueued: @escaping @MainActor () -> Void = {},
         onSurfaceAttached: @escaping @MainActor () -> Void = {},
         onSurfaceReady: @escaping @MainActor () -> Void = {}
     ) {
         self.videoSurface = videoSurface
+        self.mixedLighting = mixedLighting
         self.onSurfaceQueued = onSurfaceQueued
         self.onSurfaceAttached = onSurfaceAttached
         self.onSurfaceReady = onSurfaceReady
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(videoSurface: videoSurface, onSurfaceQueued: onSurfaceQueued, onSurfaceAttached: onSurfaceAttached, onSurfaceReady: onSurfaceReady)
+        Coordinator(videoSurface: videoSurface, onSurfaceQueued: onSurfaceQueued, onSurfaceAttached: onSurfaceAttached, onSurfaceReady: onSurfaceReady, mixedLighting: mixedLighting)
     }
 
     func makeUIView(context: Context) -> VisionSampleBufferDisplayUIView {
         let view = VisionSampleBufferDisplayUIView()
-        view.backgroundColor = .black
-        view.isOpaque = true
-        view.displayLayer.backgroundColor = UIColor.black.cgColor
+        applyCanvas(view)
         view.displayLayer.videoGravity = .resizeAspect
+        view.clipsToBounds = true
         let coordinator = context.coordinator
         view.onBackingPixelSizeChange = { width, height in
             MainActor.assumeIsolated {
@@ -82,7 +84,20 @@ struct VisionSampleBufferDisplayView: UIViewRepresentable {
     func updateUIView(
         _ uiView: VisionSampleBufferDisplayUIView,
         context: Context
-    ) {}
+    ) {
+        applyCanvas(uiView)
+        context.coordinator.mixedLighting = mixedLighting
+    }
+
+    private func applyCanvas(_ view: VisionSampleBufferDisplayUIView) {
+        let glow = mixedLighting?.screenGlowStyle.isActive == true
+        let windowActive = mixedLighting?.windowActive != false
+        let clear = glow && windowActive
+        view.backgroundColor = clear ? .clear : .black
+        view.isOpaque = !clear
+        view.displayLayer.backgroundColor = (clear ? UIColor.clear : UIColor.black).cgColor
+        view.clipsToBounds = true
+    }
 
     static func dismantleUIView(
         _ uiView: VisionSampleBufferDisplayUIView,
@@ -98,17 +113,20 @@ struct VisionSampleBufferDisplayView: UIViewRepresentable {
         private let onSurfaceAttached: @MainActor () -> Void
         private let onSurfaceReady: @MainActor () -> Void
         private var attachmentID: UUID?
+        weak var mixedLighting: VisionMixedLightingState?
 
         init(
             videoSurface: SampleBufferVideoSurfaceBinding,
             onSurfaceQueued: @escaping @MainActor () -> Void,
             onSurfaceAttached: @escaping @MainActor () -> Void,
-            onSurfaceReady: @escaping @MainActor () -> Void
+            onSurfaceReady: @escaping @MainActor () -> Void,
+            mixedLighting: VisionMixedLightingState?
         ) {
             self.videoSurface = videoSurface
             self.onSurfaceQueued = onSurfaceQueued
             self.onSurfaceAttached = onSurfaceAttached
             self.onSurfaceReady = onSurfaceReady
+            self.mixedLighting = mixedLighting
         }
 
         func attach(_ layer: AVSampleBufferDisplayLayer) {
@@ -121,6 +139,7 @@ struct VisionSampleBufferDisplayView: UIViewRepresentable {
             Task { @MainActor [weak self] in
                 await attachment.value
                 guard let self, self.attachmentID == id else { return }
+                self.mixedLighting?.bind(layer: layer, surface: self.videoSurface)
                 self.onSurfaceAttached()
                 // Attachment only establishes ownership. Apple's display-ready
                 // flag means the first image is actually available to show.
@@ -138,6 +157,7 @@ struct VisionSampleBufferDisplayView: UIViewRepresentable {
 
         func detach(_ layer: AVSampleBufferDisplayLayer) {
             attachmentID = nil
+            mixedLighting?.unbind(layer: layer)
             videoSurface.detach(layer)
         }
 

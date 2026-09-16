@@ -21,6 +21,10 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
     var presentation: Presentation = .rail
     var diagnosticsProvider: (() -> VisionPlayerDiagnostics?)? = nil
     var hideTablet: () -> Void = {}
+    var dock: Binding<VisionControlDock>? = nil
+    var playerSize: CGSize = .zero
+    var recallControls = 0
+    @State private var dragStart: VisionControlDock?
     private enum TabletSection: String, CaseIterable {
         case controls = "Controls", room = "Screen", settings = "Settings", stats = "Stats"
     }
@@ -54,6 +58,17 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
                 Spacer()
                 Button("PS Home") { coordinator.pulse(.playStation); onInteraction() }
                     .accessibilityIdentifier("farframe.arena.psHome")
+                Menu {
+                    Button("Glass Arena controls") { tabletSection = .room; onInteraction() }
+                    Button("Exit immersion", systemImage: "rectangle.on.rectangle") {
+                        showHome(); onInteraction()
+                    }
+                } label: {
+                    Image(systemName: "cube.transparent").frame(width: 44, height: 44)
+                }
+                .accessibilityLabel("Immersive environment")
+                .help("Immersive environment")
+                .accessibilityIdentifier("farframe.arena.environmentMenu")
                 Button("Hide", systemImage: "minus") { hideTablet() }
                     .accessibilityIdentifier("farframe.arena.hideControls")
             }
@@ -98,65 +113,134 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
     }
 
     private var controlRail: some View {
-        VStack(spacing: 10) {
-            circleButton(
-                title: controlsExpanded ? "Collapse Controls" : "Expand Controls",
-                symbol: "ellipsis"
-            ) {
-                toggleControlsExpanded()
-            }
-            .opacity(controlsExpanded || collapsedControlIsDimmed == false ? 1 : 0.3)
-            .scaleEffect(controlsExpanded || collapsedControlIsDimmed == false ? 1 : 0.92)
-            .animation(.easeOut(duration: 0.2), value: collapsedControlIsDimmed)
-            .hoverEffect(.highlight)
-            .onHover { hasGaze in
-                collapsedControlHasGaze = hasGaze
-                guard controlsExpanded == false else { return }
-                collapsedControlIsDimmed = !hasGaze
-            }
-            .task(id: controlsExpanded) {
-                guard controlsExpanded == false else { return }
-                do {
-                    try await Task.sleep(for: .seconds(3))
-                } catch {
-                    return
-                }
-                guard Task.isCancelled == false,
-                      collapsedControlHasGaze == false else { return }
-                collapsedControlIsDimmed = true
-            }
-
+        let horizontal = dock?.wrappedValue.edge.horizontal == true
+        return VisionRailStack(horizontal: horizontal) {
+            railCore
+        }
+        .animation(nil, value: horizontal)
+        .transaction(value: horizontal) { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
+        }
+        .geometryGroup()
+        .padding(controlsExpanded ? 8 : 0)
+        .background {
             if controlsExpanded {
-                roomControls()
-                ForEach(
-                    playerControlDescriptors.filter {
-                        coordinator.isPlayerControlPinned($0.id)
-                    }
-                ) { control in
-                    ornamentButton(control)
-                }
-
-                circleButton(title: "Customize Controls", symbol: "slider.horizontal.3") {
-                    showControlsMenu.toggle()
-                    onInteraction()
-                }
-                .popover(
-                    isPresented: $showControlsMenu,
-                    attachmentAnchor: .rect(.bounds),
-                    arrowEdge: .trailing
-                ) {
-                    controlsOverflowMenu
-                }
+                Capsule().fill(Color(white: 0.055).opacity(0.96))
+                    .overlay(Capsule().stroke(.white.opacity(0.16)))
             }
+        }
+        .foregroundStyle(.white)
+        .preferredColorScheme(.dark)
+        .onChange(of: recallControls) { _, _ in
+            controlsExpanded = true
+            collapsedControlIsDimmed = false
         }
         .animation(.snappy, value: coordinator.pinnedPlayerControlIDs)
         .animation(.snappy, value: controlsExpanded)
+        .offset(dock?.wrappedValue.edge.outwardOffset ?? .zero)
+        .padding(dock == nil ? 0 : 36)
+        .transaction { transaction in
+            if dragStart != nil {
+                transaction.animation = nil
+                transaction.disablesAnimations = true
+            }
+        }
+    }
+
+    private func updateDock(_ value: VisionControlDock, binding: Binding<VisionControlDock>) {
+        // Move the attachment and reflow its axis in one nonanimated transaction.
+        // Retain view identity so an edge crossing does not cancel the drag.
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { binding.wrappedValue = value }
     }
 
     private func toggleControlsExpanded() {
         controlsExpanded.toggle()
         collapsedControlIsDimmed = false
         onInteraction()
+    }
+
+    @ViewBuilder
+    private var railCore: some View {
+        circleButton(
+            title: controlsExpanded ? "Collapse Controls" : "Expand Controls",
+            symbol: controlsExpanded ? "chevron.up" : "chevron.down"
+        ) {
+            toggleControlsExpanded()
+        }
+        .opacity(controlsExpanded || collapsedControlIsDimmed == false ? 1 : 0.3)
+        .scaleEffect(controlsExpanded || collapsedControlIsDimmed == false ? 1 : 0.92)
+        .animation(.easeOut(duration: 0.2), value: collapsedControlIsDimmed)
+        .onHover { hasGaze in
+            collapsedControlHasGaze = hasGaze
+            guard controlsExpanded == false else { return }
+            collapsedControlIsDimmed = !hasGaze
+        }
+        .task(id: controlsExpanded) {
+            guard controlsExpanded == false else { return }
+            do {
+                try await Task.sleep(for: .seconds(3))
+            } catch {
+                return
+            }
+            guard Task.isCancelled == false,
+                  collapsedControlHasGaze == false else { return }
+            collapsedControlIsDimmed = true
+        }
+
+        if controlsExpanded {
+            if let dock {
+                Image(systemName: "line.3.horizontal")
+                    .frame(width: 44, height: 44)
+                    .contentShape(Circle())
+                    .contentShape(.hoverEffect, Circle())
+                    .hoverEffect(.highlight)
+                    .visionControlHint("Move Controls")
+                    .accessibilityLabel("Move Controls")
+                    .accessibilityHint("Drag to any edge of the window")
+                    .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .global)
+                        .onChanged { value in
+                            let start = dragStart ?? dock.wrappedValue
+                            dragStart = start
+                            updateDock(start.moved(by: value.translation, in: playerSize, retaining: dock.wrappedValue.edge), binding: dock)
+                        }
+                        .onEnded { value in
+                            let start = dragStart ?? dock.wrappedValue
+                            updateDock(start.moved(by: value.translation, in: playerSize, retaining: dock.wrappedValue.edge), binding: dock)
+                            dock.wrappedValue.save()
+                            dragStart = nil
+                            onInteraction()
+                        })
+                    .accessibilityAction(named: "Move to next edge") {
+                        let edges = VisionControlDock.Edge.allCases
+                        let index = edges.firstIndex(of: dock.wrappedValue.edge) ?? 0
+                        updateDock(VisionControlDock(edge: edges[(index + 1) % edges.count]), binding: dock)
+                        dock.wrappedValue.save()
+                    }
+            }
+            roomControls()
+            ForEach(
+                playerControlDescriptors.filter {
+                    coordinator.isPlayerControlPinned($0.id)
+                }
+            ) { control in
+                ornamentButton(control)
+            }
+
+            circleButton(title: "Customize Controls", symbol: "slider.horizontal.3") {
+                showControlsMenu.toggle()
+                onInteraction()
+            }
+            .popover(
+                isPresented: $showControlsMenu,
+                attachmentAnchor: .rect(.bounds),
+                arrowEdge: .trailing
+            ) {
+                controlsOverflowMenu
+            }
+        }
     }
 
     /// One scrolling surface, not a fixed stack with a scrolling footer. The
@@ -573,7 +657,7 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
                 }
         )
         .animation(.easeOut(duration: 0.15), value: isDraggingPinnedVolume)
-        .help("Volume \(volumePercent)%. Tap to mute; drag left or right to adjust.")
+        .visionControlHint("Volume \(volumePercent)%. Tap or drag.")
         .accessibilityElement()
         .accessibilityLabel("Volume")
         .accessibilityValue(
@@ -633,12 +717,15 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
                 }
             }
             .frame(width: 44, height: 44)
+            .help(title)
+            .contentShape(.interaction, Circle())
+            .contentShape(.hoverEffect, Circle())
+            .hoverEffect(.highlight)
         }
         .buttonStyle(.plain)
         .background(.regularMaterial, in: Circle())
         .clipShape(Circle())
         .contentShape(Circle())
-        .help(title)
         .accessibilityLabel(title)
     }
 
@@ -700,4 +787,66 @@ private struct VisionPlayerControlDescriptor: Identifiable {
     var isOn = false
     var usesBrandMark = false
     let action: () -> Void
+}
+
+
+private struct VisionRailStack: Layout {
+    var horizontal: Bool
+    private let spacing: CGFloat = 14
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        guard sizes.isEmpty == false else { return .zero }
+        let extra = spacing * CGFloat(sizes.count - 1)
+        if horizontal {
+            return CGSize(
+                width: sizes.reduce(0) { $0 + $1.width } + extra,
+                height: sizes.map(\.height).max() ?? 0
+            )
+        }
+        return CGSize(
+            width: sizes.map(\.width).max() ?? 0,
+            height: sizes.reduce(0) { $0 + $1.height } + extra
+        )
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if horizontal {
+                subview.place(
+                    at: CGPoint(x: x, y: bounds.midY - size.height / 2),
+                    proposal: ProposedViewSize(size)
+                )
+                x += size.width + spacing
+            } else {
+                subview.place(
+                    at: CGPoint(x: bounds.midX - size.width / 2, y: y),
+                    proposal: ProposedViewSize(size)
+                )
+                y += size.height + spacing
+            }
+        }
+    }
+}
+
+extension VisionPlayerControlRail {
+    func configuredDock(_ dock: Binding<VisionControlDock>, size: CGSize, recall: Int) -> Self {
+        var result = self
+        result.dock = dock
+        result.playerSize = size
+        result.recallControls = recall
+        return result
+    }
+}
+
+
+// Native help is rendered by visionOS for gaze. onHover only reports fingers
+// and trackpad pointers, so it must not gate whether these hints exist.
+extension View {
+    func visionControlHint(_ title: String) -> some View {
+        help(title)
+    }
 }

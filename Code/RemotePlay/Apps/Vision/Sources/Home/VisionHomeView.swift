@@ -11,6 +11,7 @@ struct VisionHomeView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var trialStatusCycleStart = Date()
+    @State private var showsControllerHelp = false
 
     /// The FF mark's purple-to-blue sweep, used for every Pro accent on Home.
     private let brandGradient = LinearGradient(
@@ -249,9 +250,9 @@ struct VisionHomeView: View {
                         .background(.cyan.opacity(0.12), in: Circle())
 
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Welcome to Farframe")
+                        Text("What's New in \(FarframeWhatsNewContent.currentReleaseVersion)")
                             .font(.headline)
-                        Text("See what you can do in version \(FarframeWhatsNewContent.currentReleaseVersion).")
+                        Text("Ambient glow in your space, plus how to pair your controller.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -272,7 +273,8 @@ struct VisionHomeView: View {
                     .frame(width: 32, height: 32)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Hide What's New for this version")
+            .help("Hide until next update")
+            .accessibilityLabel("Hide until next update")
         }
         .padding(16)
         .background(.cyan.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -293,7 +295,15 @@ struct VisionHomeView: View {
 
                 VStack(alignment: .trailing, spacing: 8) {
                     phaseBadge
-                    controllerBadge
+                    Button { showsControllerHelp.toggle() } label: {
+                        controllerBadge
+                    }
+                    .buttonStyle(.plain)
+                    .help("Connect your controller")
+                    .popover(isPresented: $showsControllerHelp,
+                             attachmentAnchor: .rect(.bounds), arrowEdge: .leading) {
+                        controllerHelp
+                    }
                 }
             }
 
@@ -719,11 +729,37 @@ struct VisionHomeView: View {
             .fixedSize()
     }
 
+    private var controllerHelp: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Text("Connect your controller").font(.headline)
+                Spacer()
+                Button("Done") { showsControllerHelp = false }
+            }
+            ScrollView { VStack(alignment: .leading, spacing: 18) {
+            Label(state.controllerIsConnected
+                  ? "Connected to Vision Pro: \(state.controllerName ?? "Controller")"
+                  : "Pair your controller with Vision Pro via Bluetooth.",
+                  systemImage: "gamecontroller")
+            Text("1. Turn the controller off and unplug its USB cable.")
+            Text("2. Hold PS + Create until the light flashes.")
+            VisionControllerPairingDiagram()
+            Text("Create is left of the touchpad, opposite Options.")
+                .font(.footnote).foregroundStyle(.secondary)
+            Text("3. On Vision Pro, open Settings > Bluetooth and select your controller.")
+            Text("To reconnect to your PS5 later, connect it to the console with a USB cable and press PS.")
+                .font(.footnote).foregroundStyle(.secondary)
+            } }.frame(maxHeight: 520)
+        }
+        .padding(24)
+        .frame(width: 440)
+    }
+
     private var controllerBadge: some View {
         Label(
             state.controllerIsConnected
                 ? state.controllerName ?? "Controller"
-                : "No controller",
+                : "Connect your controller",
             systemImage: "gamecontroller.fill"
         )
         .font(.caption.weight(.semibold))
@@ -804,5 +840,38 @@ private extension VisionHomePhase {
         case .ready, .streaming: .green
         case .recoveryFailed, .registrationRequired, .failed: .orange
         }
+    }
+}
+
+/// A simplified, original button map, with labels rather than proprietary art.
+private struct VisionControllerPairingDiagram: View {
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(alignment: .top, spacing: 16) {
+                VStack(spacing: 6) {
+                    Text("Create").fontWeight(.semibold)
+                    Capsule().fill(.blue).frame(width: 9, height: 24)
+                }
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(.secondary.opacity(0.12))
+                    .overlay { Text("Touchpad").foregroundStyle(.secondary) }
+                    .frame(maxWidth: 150, minHeight: 56)
+                VStack(spacing: 6) {
+                    Text("Options").foregroundStyle(.secondary)
+                    Capsule().fill(.secondary.opacity(0.4)).frame(width: 9, height: 24)
+                }
+            }
+            Text("PS")
+                .fontWeight(.bold)
+                .frame(width: 38, height: 38)
+                .background(.blue.opacity(0.2), in: Circle())
+                .overlay { Circle().stroke(.blue, lineWidth: 2) }
+        }
+        .font(.caption)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Button guide: Create is left of the touchpad; Options is on the right. The PS button is below the touchpad. Hold Create and PS together.")
+        .accessibilityIdentifier("controller.pairingDiagram")
     }
 }

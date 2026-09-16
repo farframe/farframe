@@ -11,7 +11,8 @@
 LICENSE
 README.md
 SECURITY.md
-Code/RemotePlay/Apps
+Code/RemotePlay/Apps/Vision
+Code/RemotePlay/Apps/Shared
 Code/RemotePlay/Packages/RemotePlayCore/Package.swift
 Code/RemotePlay/Packages/RemotePlayCore/Sources
 Code/RemotePlay/Packages/RemotePlayCore/Tests

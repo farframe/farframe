@@ -25,13 +25,17 @@ public struct FarframeSupportedDevices: View {
     public var body: some View {
         VStack(spacing: 9) {
             HStack(spacing: 24) {
-                ForEach(["vision.pro", "macbook", "ipad", "iphone"], id: \.self) { symbol in
+                Image(systemName: "vision.pro")
+                    .font(.title3.weight(.regular))
+                    .frame(minWidth: 24, minHeight: 24)
+                    .foregroundStyle(Color.blue.gradient)
+                ForEach(["macbook", "ipad", "iphone"], id: \.self) { symbol in
                     Image(systemName: symbol)
                         .font(.title3.weight(.regular))
                         .frame(minWidth: 24, minHeight: 24)
+                        .foregroundStyle(Color.secondary.opacity(0.55))
                 }
             }
-            .foregroundStyle(Color.blue.gradient)
             .accessibilityHidden(true)
             Text("Available now on visionOS. Working on iOS, iPadOS, and macOS.")
                 .font(.caption)

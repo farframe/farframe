@@ -14,11 +14,19 @@ enum VisionArenaBloom {
     #endif
 
     static func update(in glowRoot: Entity, level: VisionArenaGlow, isActive: Bool) {
+        guard let halo = glowRoot.findEntity(named: "ArenaTightHalo") else { return }
+        apply(on: halo, level: level, isActive: isActive, intensity: 1, blurRadius: 3)
+    }
+
+    static func apply(
+        on halo: Entity,
+        level: VisionArenaGlow,
+        isActive: Bool,
+        intensity: Float = 1,
+        blurRadius: Float = 3
+    ) {
         #if compiler(>=6.4)
         if #available(visionOS 27.0, *) {
-            // Limit the search footprint to the halo. The screen, HUD, floor
-            // and side washes are not bloom descendants.
-            guard let halo = glowRoot.findEntity(named: "ArenaTightHalo") else { return }
             let thermal = ProcessInfo.processInfo.thermalState
             guard supportsBloom, isActive, level != .off,
                   thermal != .serious, thermal != .critical else {
@@ -27,9 +35,10 @@ enum VisionArenaBloom {
                 return
             }
             var options = BloomOptionsComponent()
-            options.strength = level == .low ? 0.12 : 0.2
-            options.threshold = 0.15
-            options.blurRadius = 3
+            let gain = min(2.5, max(0.4, intensity))
+            options.strength = (level == .low ? 0.14 : 0.26) * gain
+            options.threshold = 0.12
+            options.blurRadius = min(12, max(1, blurRadius))
             halo.components.set(BloomComponent(scope: .hierarchical))
             halo.components.set(options)
         }

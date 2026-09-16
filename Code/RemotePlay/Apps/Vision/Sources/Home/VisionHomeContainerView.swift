@@ -60,6 +60,7 @@ struct VisionHomeContainerView: View {
             }
             .onAppear {
                 coordinator.claimSetupWindow(instanceID)
+                presentWhatsNewIfNeeded()
             }
             .onDisappear {
                 coordinator.resignSetupWindow(instanceID)
@@ -80,7 +81,10 @@ struct VisionHomeContainerView: View {
                     accessStore: accessStore
                 )
             }
-            .sheet(isPresented: $whatsNewIsPresented) {
+            .sheet(isPresented: $whatsNewIsPresented, onDismiss: {
+                dismissedWhatsNewVersion = FarframeWhatsNewContent.contentID
+                askPlayStyleIfEntitledAndUnasked()
+            }) {
                 FarframeWhatsNewView()
             }
             // Marking the question asked on dismissal — not on choosing — is
@@ -193,7 +197,7 @@ struct VisionHomeContainerView: View {
             controllerIsConnected: controllerIsConnected,
             controllerName: controllerName,
             showsWhatsNewPrompt:
-                dismissedWhatsNewVersion != FarframeWhatsNewContent.currentReleaseVersion,
+                dismissedWhatsNewVersion != FarframeWhatsNewContent.contentID,
             accessAllowsConnect: accessStore.allowsConnect,
             accessPresentation: homeAccessPresentation,
             accessNotice: accessStore.notice
@@ -245,7 +249,7 @@ struct VisionHomeContainerView: View {
         case .openWhatsNew:
             whatsNewIsPresented = true
         case .dismissWhatsNewPrompt:
-            dismissedWhatsNewVersion = FarframeWhatsNewContent.currentReleaseVersion
+            dismissedWhatsNewVersion = FarframeWhatsNewContent.contentID
         case .pairConsole:
             pairingTarget = VisionPairingTarget()
         case let .resumeRegistration(consoleID, displayName, hostAddress):
@@ -317,7 +321,13 @@ struct VisionHomeContainerView: View {
     /// in entitlement, because two sheets cannot be presented from one
     /// presenter and the paywall is still on screen at the moment access is
     /// granted.
+    private func presentWhatsNewIfNeeded() {
+        guard dismissedWhatsNewVersion != FarframeWhatsNewContent.contentID else { return }
+        whatsNewIsPresented = true
+    }
+
     private func askPlayStyleIfEntitledAndUnasked() {
+        guard dismissedWhatsNewVersion == FarframeWhatsNewContent.contentID else { return }
         guard accessStore.allowsConnect, playStyleWasAsked == false else { return }
         playStyleOnboardingIsPresented = true
     }
