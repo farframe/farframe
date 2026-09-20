@@ -199,6 +199,34 @@ func providerFacadeRepeatedStartDoesNotCorruptActiveDisplayRestriction() async t
 }
 
 @Test
+func providerFacadeRecordingSourceResetsOnReconnectAndPreservesActiveRestrictions() async throws {
+    let fixture = try await ProviderSessionFixture.make()
+    let generic = try await fixture.provider.makeSession(for: fixture.console.remotePlayExperience)
+    let session = try #require(generic as? PlayStationRemotePlayStreamingSession)
+    let format = try StreamingAudioFormat(channelCount: 2, bitsPerSample: 16, sampleRate: 48_000, frameSize: 480)
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("FarframeProviderRecording-\(UUID()).mp4")
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    try await session.start()
+    #expect(await fixture.nativeSession.emitMedia(.audioFormat(format)))
+    #expect(await fixture.nativeSession.emitMedia(.displayBlocked(true)))
+    #expect(throws: (any Error).self) { try session.gameplayRecorder.start(to: url) }
+    await #expect(throws: (any Error).self) { try await session.start() }
+    #expect(throws: (any Error).self) { try session.gameplayRecorder.start(to: url) }
+
+    await session.stop()
+    try await session.start()
+    // The previous audio configuration is not enough to record a new stream.
+    #expect(throws: (any Error).self) { try session.gameplayRecorder.start(to: url) }
+    #expect(await fixture.nativeSession.emitMedia(.audioFormat(format)))
+    try session.gameplayRecorder.start(to: url)
+    #expect(session.gameplayRecorder.snapshot().phase == .starting)
+    await session.stop()
+    #expect(session.gameplayRecorder.snapshot().phase == .failed)
+    #expect(FileManager.default.fileExists(atPath: url.path) == false)
+}
+
+@Test
 func providerFacadeRetriesFailedTeardownWithoutReplacingItsCoordinator() async throws {
     let nativeSession = ProviderFakeNativeSession(stopFailuresRemaining: 1)
     let fixture = try await ProviderSessionFixture.make(nativeSession: nativeSession)

@@ -20,7 +20,8 @@ struct VisionHomeContainerView: View {
     @State private var whatsNewIsPresented = false
     @AppStorage(FarframeWhatsNewContent.dismissedVersionKey) private var dismissedWhatsNewVersion = ""
     @State private var pairingTarget: VisionPairingTarget?
-    @State private var pendingConnectAfterPairingID: UUID?
+    @State private var accessPendingAfterPairing = false
+    @State private var accessOpenedAfterPairing = false
     @State private var consolePendingRemoval: VisionHomeConsoleSummary?
     @State private var addressesTarget: PlayStationConsoleAddressesTarget?
     @State private var controllerIsConnected = false
@@ -43,6 +44,11 @@ struct VisionHomeContainerView: View {
 
     var body: some View {
         VisionHomeView(state: homeState, send: handle)
+            .safeAreaInset(edge: .bottom) {
+                if !coordinator.gameplayRecording.isBusy {
+                    VisionGameplayRecordingStatus(coordinator: coordinator)
+                }
+            }
             .farframeReviewPrompt(phase: reviewPhase, unobstructed: pairingTarget == nil && addressesTarget == nil && consolePendingRemoval == nil && !accessIsPresented && !settingsArePresented && !whatsNewIsPresented && !playStyleOnboardingIsPresented)
             .task {
                 await coordinator.prepare()
@@ -60,18 +66,20 @@ struct VisionHomeContainerView: View {
             }
             .onAppear {
                 coordinator.claimSetupWindow(instanceID)
+                coordinator.updateSetupWindowActivity(instanceID, isActive: scenePhase == .active)
                 presentWhatsNewIfNeeded()
             }
             .onDisappear {
                 coordinator.resignSetupWindow(instanceID)
             }
             .onChange(of: scenePhase) { _, phase in
+                coordinator.updateSetupWindowActivity(instanceID, isActive: phase == .active)
                 guard phase == .active else { return }
                 Task { await accessStore.refresh() }
             }
             .sheet(
                 isPresented: $accessIsPresented,
-                onDismiss: askPlayStyleIfEntitledAndUnasked
+                onDismiss: accessDidDismiss
             ) {
                 FarframePaywallView(accessStore: accessStore)
             }
@@ -105,12 +113,12 @@ struct VisionHomeContainerView: View {
                     onSkip: { playStyleOnboardingIsPresented = false }
                 )
             }
-            .sheet(item: $pairingTarget, onDismiss: connectAfterPairingIfNeeded) { target in
+            .sheet(item: $pairingTarget, onDismiss: continueAfterPairingIfNeeded) { target in
                 VisionPlayStationPairingView(
                     coordinator: coordinator,
                     target: target,
-                    onConnect: { consoleID in
-                        pendingConnectAfterPairingID = consoleID
+                    onContinueToAccess: {
+                        accessPendingAfterPairing = true
                     }
                 )
             }
@@ -327,12 +335,21 @@ struct VisionHomeContainerView: View {
     }
 
     private func askPlayStyleIfEntitledAndUnasked() {
+        guard pairingTarget == nil, !accessIsPresented, !settingsArePresented,
+              !whatsNewIsPresented, !accessPendingAfterPairing,
+              !accessOpenedAfterPairing, !coordinator.consoles.isEmpty else { return }
         guard dismissedWhatsNewVersion == FarframeWhatsNewContent.contentID else { return }
         guard accessStore.allowsConnect, playStyleWasAsked == false else { return }
         playStyleOnboardingIsPresented = true
     }
 
     private func connect(_ consoleID: UUID) {
+        // An existing stream may be behind another window. Bring its stable
+        // player scene forward without creating or tearing down a session.
+        if coordinator.phase == .streaming(consoleID), coordinator.videoSurface != nil {
+            openWindow(id: VisionWindowID.player, value: VisionWindowID.player)
+            return
+        }
         guard accessStore.allowsConnect else {
             accessIsPresented = true
             return
@@ -348,14 +365,25 @@ struct VisionHomeContainerView: View {
             }
             // The player hides Home itself once video is streaming; dismissing
             // here left the user staring at nothing while Connect was pending.
-            openWindow(id: VisionWindowID.player)
+            openWindow(id: VisionWindowID.player, value: VisionWindowID.player)
         }
     }
 
-    private func connectAfterPairingIfNeeded() {
-        guard let consoleID = pendingConnectAfterPairingID else { return }
-        pendingConnectAfterPairingID = nil
-        connect(consoleID)
+    private func continueAfterPairingIfNeeded() {
+        guard accessPendingAfterPairing else { return }
+        accessPendingAfterPairing = false
+        accessOpenedAfterPairing = true
+        // Wait for the pairing sheet to finish dismissing before presenting
+        // the existing commerce surface. Neither branch starts gameplay.
+        accessIsPresented = true
+    }
+
+    private func accessDidDismiss() {
+        if accessOpenedAfterPairing {
+            accessOpenedAfterPairing = false
+            return
+        }
+        askPlayStyleIfEntitledAndUnasked()
     }
 }
 

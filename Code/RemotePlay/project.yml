@@ -20,6 +20,8 @@ settings:
     EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
     EXCLUDED_ARCHS[sdk=xrsimulator*]: x86_64
 packages:
+  GuidedHelp:
+    path: Packages/GuidedHelp
   RemotePlayCore:
     path: Packages/RemotePlayCore
 targets:
@@ -36,8 +38,13 @@ targets:
       - VisionArenaExterior*.swift
     - Apps/Shared/Sources
     - path: Apps/Vision/Resources
+      excludes:
+      - localization
+    - path: Apps/Shared/Resources/HelpGuides.xcassets
     - path: Apps/Shared/Resources/PrivacyInfo.xcprivacy
     dependencies:
+    - package: GuidedHelp
+      product: GuidedHelp
     - package: RemotePlayCore
       product: AccountsAndSecurity
     - package: RemotePlayCore
@@ -61,14 +68,16 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.unshackledpursuit.remoteplay.vision
-        MARKETING_VERSION: '1.3'
-        CURRENT_PROJECT_VERSION: 38
+        MARKETING_VERSION: '1.4'
+        CURRENT_PROJECT_VERSION: 12
         PRODUCT_NAME: Farframe
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_CFBundleDisplayName: Farframe
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Farframe needs local network
           access to find and connect to your PlayStation 5.
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: Save your gameplay videos
+          to Photos.
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic

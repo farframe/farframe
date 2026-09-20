@@ -14,6 +14,7 @@ struct VisionControlDock: Codable, Equatable {
             case .leading: CGSize(width: -36, height: 0)
             }
         }
+        #if os(visionOS)
         var alignment: Alignment3D {
             switch self {
             case .top: .bottom
@@ -22,6 +23,7 @@ struct VisionControlDock: Codable, Equatable {
             case .leading: .trailing
             }
         }
+        #endif
     }
     var edge: Edge = .trailing
     var progress: Double = 0.5
@@ -49,15 +51,22 @@ struct VisionControlDock: Codable, Equatable {
         let fraction = next.horizontal ? x / size.width : y / size.height
         return Self(edge: next, progress: min(0.75, max(0.25, fraction)))
     }
-    static func load() -> Self {
-        guard let data = UserDefaults.standard.data(forKey: "farframe.vision.controlDock"),
+    static func load(defaults: UserDefaults = .standard) -> Self {
+        let revisionKey = "farframe.vision.controlDock.defaultRevision"
+        if defaults.integer(forKey: revisionKey) < 2 {
+            let initial = Self()
+            initial.save(defaults: defaults)
+            defaults.set(2, forKey: revisionKey)
+            return initial
+        }
+        guard let data = defaults.data(forKey: "farframe.vision.controlDock"),
               let dock = try? JSONDecoder().decode(Self.self, from: data),
               dock.progress.isFinite else { return Self() }
         return Self(edge: dock.edge, progress: min(0.75, max(0.25, dock.progress)))
     }
-    func save() {
+    func save(defaults: UserDefaults = .standard) {
         if let data = try? JSONEncoder().encode(self) {
-            UserDefaults.standard.set(data, forKey: "farframe.vision.controlDock")
+            defaults.set(data, forKey: "farframe.vision.controlDock")
         }
     }
 }

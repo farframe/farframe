@@ -126,6 +126,10 @@ struct VisionPlayerHealthHUD: View {
             metricRow("Mapping", "Standard · right Options · left Create")
 
             Divider().opacity(0.35)
+            Toggle("Smooth Motion", isOn: $coordinator.smoothMotionEnabled)
+                .font(.caption)
+            Text("Changes immediately. Compare response and stalls in the same scene with this on and off. Copy Diagnosis for each setting.")
+                .font(.caption2).foregroundStyle(.secondary)
             diagnosisRows(diagnostics.advice)
         }
         .padding(12)

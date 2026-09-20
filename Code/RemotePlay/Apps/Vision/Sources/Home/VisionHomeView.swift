@@ -545,7 +545,7 @@ struct VisionHomeView: View {
                     send(.connect(consoleID: console.id))
                 } label: {
                     if isStreaming {
-                        Label("Playing", systemImage: "checkmark.circle.fill")
+                        Label("Show Game", systemImage: "rectangle.on.rectangle")
                     } else if isConnecting {
                         Label("Connecting…", systemImage: "antenna.radiowaves.left.and.right")
                     } else if state.accessAllowsConnect == false {
@@ -555,10 +555,10 @@ struct VisionHomeView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(operationInFlight || isStreaming)
+                .disabled(operationInFlight)
                 .accessibilityLabel(
                     isStreaming
-                        ? "Playing on \(console.name)"
+                        ? "Show game on \(console.name)"
                         : isConnecting
                             ? "Connecting to \(console.name)"
                             : state.accessAllowsConnect
@@ -730,29 +730,11 @@ struct VisionHomeView: View {
     }
 
     private var controllerHelp: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                Text("Connect your controller").font(.headline)
-                Spacer()
-                Button("Done") { showsControllerHelp = false }
-            }
-            ScrollView { VStack(alignment: .leading, spacing: 18) {
-            Label(state.controllerIsConnected
-                  ? "Connected to Vision Pro: \(state.controllerName ?? "Controller")"
-                  : "Pair your controller with Vision Pro via Bluetooth.",
-                  systemImage: "gamecontroller")
-            Text("1. Turn the controller off and unplug its USB cable.")
-            Text("2. Hold PS + Create until the light flashes.")
-            VisionControllerPairingDiagram()
-            Text("Create is left of the touchpad, opposite Options.")
-                .font(.footnote).foregroundStyle(.secondary)
-            Text("3. On Vision Pro, open Settings > Bluetooth and select your controller.")
-            Text("To reconnect to your PS5 later, connect it to the console with a USB cable and press PS.")
-                .font(.footnote).foregroundStyle(.secondary)
-            } }.frame(maxHeight: 520)
-        }
-        .padding(24)
-        .frame(width: 440)
+        VisionControllerHelpView(
+            isConnected: state.controllerIsConnected,
+            controllerName: state.controllerName,
+            onDone: { showsControllerHelp = false }
+        )
     }
 
     private var controllerBadge: some View {
@@ -874,4 +856,41 @@ private struct VisionControllerPairingDiagram: View {
         .accessibilityLabel("Button guide: Create is left of the touchpad; Options is on the right. The PS button is below the touchpad. Hold Create and PS together.")
         .accessibilityIdentifier("controller.pairingDiagram")
     }
+}
+
+/// Shared by Home's existing popover and the post-pairing controller step.
+struct VisionControllerHelpView: View {
+    let isConnected: Bool
+    let controllerName: String?
+    var doneTitle: LocalizedStringKey = "Done"
+    var canContinue = true
+    let onDone: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Text("Connect your controller").font(.headline)
+                Spacer()
+                Button(doneTitle, action: onDone)
+                    .disabled(!canContinue)
+            }
+            ScrollView { VStack(alignment: .leading, spacing: 18) {
+            Label(isConnected
+                  ? "Connected to Vision Pro: \(controllerName ?? "Controller")"
+                  : "Pair your controller with Vision Pro via Bluetooth.",
+                  systemImage: "gamecontroller")
+            Text("1. Turn the controller off and unplug its USB cable.")
+            Text("2. Hold PS + Create until the light flashes.")
+            VisionControllerPairingDiagram()
+            Text("Create is left of the touchpad, opposite Options.")
+                .font(.footnote).foregroundStyle(.secondary)
+            Text("3. On Vision Pro, open Settings > Bluetooth and select your controller.")
+            Text("To reconnect to your PS5 later, connect it to the console with a USB cable and press PS.")
+                .font(.footnote).foregroundStyle(.secondary)
+            } }.frame(maxHeight: 520)
+        }
+        .padding(24)
+        .frame(width: 440)
+    }
+
 }

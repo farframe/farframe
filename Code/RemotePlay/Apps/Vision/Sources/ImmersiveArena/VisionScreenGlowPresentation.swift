@@ -20,8 +20,8 @@ enum VisionScreenGlowMetrics {
     static let roomOpacity: Double = 0.72
     static func edgeGap(for extent: VisionScreenGlowStyle.Extent) -> CGFloat {
         switch extent {
-        case .tight: 40
-        case .room: 72
+        case .tight: 12
+        case .room: 12
         }
     }
 
@@ -159,15 +159,9 @@ struct VisionScreenGlowContainer<Content: View>: View {
                 if active {
                     GeometryReader { picture in
                         glow(size: picture.size, fade: fade, strength: style.strength)
-                            .frame(width: picture.size.width, height: picture.size.height)
-                            .mask {
-                                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                    .frame(
-                                        width: picture.size.width + fade * 0.9,
-                                        height: picture.size.height + fade * 0.9
-                                    )
-                                    .blur(radius: fade * 0.5)
-                            }
+                            .frame(width: picture.size.width + 2 * fade, height: picture.size.height + 2 * fade)
+                            .mask { VisionGlowFadeMask(fade: fade) }
+                            .position(x: picture.size.width / 2, y: picture.size.height / 2)
                     }
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
@@ -329,5 +323,30 @@ private struct RealRoomScreenLight: View {
                 .blur(radius: 24 * scale)
                 .offset(y: size.height * 0.51)
         }
+    }
+}
+
+/// Finite fade: alpha reaches exactly zero before the outer window clip.
+/// Unlike a blurred mask, this has no residual Gaussian tail at the boundary.
+struct VisionGlowFadeMask: View {
+    let fade: CGFloat
+    var body: some View {
+        GeometryReader { proxy in
+            gradient(length: proxy.size.width, horizontal: true)
+                .mask { gradient(length: proxy.size.height, horizontal: false) }
+        }
+    }
+    private func gradient(length: CGFloat, horizontal: Bool) -> LinearGradient {
+        let f = min(0.49, max(0.001, fade / max(1, length)))
+        return LinearGradient(stops: [
+            .init(color: .clear, location: 0),
+            .init(color: .white.opacity(0.08), location: f * 0.25),
+            .init(color: .white.opacity(0.5), location: f * 0.55),
+            .init(color: .white, location: f),
+            .init(color: .white, location: 1 - f),
+            .init(color: .white.opacity(0.5), location: 1 - f * 0.55),
+            .init(color: .white.opacity(0.08), location: 1 - f * 0.25),
+            .init(color: .clear, location: 1)
+        ], startPoint: horizontal ? .leading : .top, endPoint: horizontal ? .trailing : .bottom)
     }
 }

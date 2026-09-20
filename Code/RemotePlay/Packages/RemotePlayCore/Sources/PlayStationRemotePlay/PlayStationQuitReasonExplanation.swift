@@ -145,10 +145,11 @@ extension PlayStationQuitReasonExplanation {
             PlayStationQuitReasonExplanation(
                 code: code,
                 identifier: "remote-play-in-use",
-                summary: "The PS5 is already running Remote Play for another device.",
+                summary: "The PS5 is still busy with Remote Play.",
                 guidance: """
-                    Disconnect Remote Play on that device without putting the \
-                    PS5 into rest, then Connect again.
+                    If you just disconnected or rested it, wait a moment, wake it \
+                    if needed, then Connect again. If another device is playing, \
+                    disconnect there first.
                     """
             )
 

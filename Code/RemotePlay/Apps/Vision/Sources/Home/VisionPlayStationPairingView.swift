@@ -14,9 +14,10 @@ struct VisionPlayStationPairingView: View {
     }
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openWindow) private var openWindow
     @Bindable var coordinator: VisionRemotePlayCoordinator
     let target: VisionPairingTarget
-    let onConnect: (UUID) -> Void
+    let onContinueToAccess: () -> Void
 
     @State private var displayName: String
     @State private var hostAddress: String
@@ -26,6 +27,9 @@ struct VisionPlayStationPairingView: View {
     @State private var linkDevicePIN = ""
     @State private var manualAccountEntryIsExpanded = false
     @State private var accountHelpIsPresented = false
+    @State private var controllerSetupIsPresented = false
+    @State private var controllerIsConnected = false
+    @State private var controllerName: String?
     @State private var status: PairingStatus = .editing
     @State private var errorMessage: String?
     @State private var pairingTask: Task<Void, Never>?
@@ -34,34 +38,46 @@ struct VisionPlayStationPairingView: View {
     init(
         coordinator: VisionRemotePlayCoordinator,
         target: VisionPairingTarget,
-        onConnect: @escaping (UUID) -> Void
+        onContinueToAccess: @escaping () -> Void
     ) {
         self.coordinator = coordinator
         self.target = target
-        self.onConnect = onConnect
+        self.onContinueToAccess = onContinueToAccess
         _displayName = State(initialValue: target.displayName)
         _hostAddress = State(initialValue: target.hostAddress)
     }
 
     var body: some View {
         NavigationStack {
-            Form {
-                introSection
-                consoleSection
-                accountSection
-                linkDeviceSection
-                statusSection
-            }
-            .navigationTitle(target.existingConsoleID == nil ? "Pair a PS5" : "Re-register PS5")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(cancelButtonTitle) {
-                        cancel()
+            Group {
+                if isPaired {
+                    if controllerSetupIsPresented {
+                        controllerSetup
+                    } else {
+                        pairedConfirmation
                     }
-                    .disabled(status == .canceling)
+                } else {
+                    Form {
+                        introSection
+                        consoleSection
+                        accountSection
+                        linkDeviceSection
+                        statusSection
+                    }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    confirmationButton
+            }
+            .navigationTitle(navigationTitle)
+            .toolbar {
+                if !isPaired {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button(cancelButtonTitle) {
+                            cancel()
+                        }
+                        .disabled(status == .canceling)
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        confirmationButton
+                    }
                 }
             }
         }
@@ -117,7 +133,10 @@ struct VisionPlayStationPairingView: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .disabled(inputsAreEditable == false)
-            Text("On PS5, open Settings > Network > Connection Status to find its local IP address.")
+            Text("On PS5, open Settings > Network > Connection Status > View Connection Status. Enter the IPv4 Address shown there.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("An IPv4 address has four numbers separated by dots. Example format: 192.0.2.10. Use your PS5’s address, not this example.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -146,6 +165,10 @@ struct VisionPlayStationPairingView: View {
                 Text("Sign in on Sony’s page to get your Remote Play Account ID for pairing. Farframe does not store your Sony password, and discards the temporary sign-in session afterward.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Button("Help with PlayStation sign-in", systemImage: "questionmark.circle") {
+                openWindow(id: VisionWindowID.signInHelp, value: VisionWindowID.signInHelp)
             }
 
             DisclosureGroup(
@@ -194,9 +217,13 @@ struct VisionPlayStationPairingView: View {
                     )
                     if digits != value { linkDevicePIN = digits }
                 }
-            Text("On PS5, open Settings > System > Remote Play > Link Device and leave the code visible.")
+            Text("On PS5, open Settings > System > Remote Play > Link Device and leave the code visible. Enter that 8-digit code here, not the number from Sony’s sign-in page.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Button("Pair PS5") { pair() }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canPair)
+                .accessibilityIdentifier("farframe.pairing.submitBesideCode")
         }
     }
 
@@ -255,15 +282,8 @@ struct VisionPlayStationPairingView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-        case let .paired(name, _):
-            Section {
-                Label("\(name) is paired", systemImage: "checkmark.circle.fill")
-                    .font(.headline)
-                    .foregroundStyle(.green)
-                Text("The registration was verified and saved securely. You will not need this Link Device code again.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+        case .paired:
+            EmptyView()
         }
     }
 
@@ -279,12 +299,76 @@ struct VisionPlayStationPairingView: View {
             ProgressView()
         case .savePending:
             Button("Retry Secure Save") { retrySecureSave() }
-        case let .paired(_, consoleID):
-            Button("Connect Now") {
-                onConnect(consoleID)
-                dismiss()
+        case .paired:
+            EmptyView()
+        }
+    }
+
+    private var isPaired: Bool {
+        if case .paired = status { return true }
+        return false
+    }
+
+    private var navigationTitle: LocalizedStringKey {
+        if isPaired { return controllerSetupIsPresented ? "Controller" : "PS5 paired" }
+        return target.existingConsoleID == nil ? "Pair a PS5" : "Re-register PS5"
+    }
+
+    private var pairedConfirmation: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 56))
+                    .foregroundStyle(.green)
+                    .accessibilityHidden(true)
+                Text("Your PS5 is paired.")
+                    .font(.largeTitle.bold())
+                Text("Your registration was verified and saved securely. You won’t need this code for normal reconnects.")
+                    .foregroundStyle(.secondary)
+                Text("Next, connect your controller to Vision Pro.")
+                    .font(.headline)
+                Button("Connect my controller", systemImage: "gamecontroller") {
+                    controllerSetupIsPresented = true
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                Button("Finish later", action: continueToAccess)
+            }
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: 460)
+            .frame(maxWidth: .infinity)
+            .padding(32)
+        }
+    }
+
+    private var controllerSetup: some View {
+        VStack(spacing: 12) {
+            VisionControllerHelpView(
+                isConnected: controllerIsConnected,
+                controllerName: controllerName,
+                doneTitle: "Continue",
+                canContinue: controllerIsConnected,
+                onDone: continueToAccess
+            )
+            Button("Finish later", action: continueToAccess)
+                .padding(.bottom, 24)
+        }
+        .frame(maxWidth: .infinity)
+        .task {
+            while !Task.isCancelled {
+                let connection = coordinator.controllerSource.connectionSnapshot()
+                controllerIsConnected = connection.isConnected
+                controllerName = connection.name
+                do { try await Task.sleep(for: .milliseconds(500)) }
+                catch { return }
             }
         }
+    }
+
+    private func continueToAccess() {
+        guard isPaired else { return }
+        onContinueToAccess()
+        dismiss()
     }
 
     private var validAccountID: Bool {

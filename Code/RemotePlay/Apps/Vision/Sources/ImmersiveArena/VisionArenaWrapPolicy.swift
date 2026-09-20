@@ -1,9 +1,11 @@
 import Foundation
+import SwiftUI
 
 enum VisionArenaLightCoverage: String, CaseIterable, Identifiable, Sendable {
     case screen = "Screen"
     case architecturalWrap = "Architectural Wrap"
     var id: Self { self }
+    var localizedTitle: LocalizedStringKey { LocalizedStringKey(rawValue) }
 }
 
 /// Geometry-free policy, fed only the existing smoothed linear-light palette.

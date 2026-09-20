@@ -91,8 +91,8 @@ struct VisionSampleBufferDisplayView: UIViewRepresentable {
 
     private func applyCanvas(_ view: VisionSampleBufferDisplayUIView) {
         let glow = mixedLighting?.screenGlowStyle.isActive == true
-        let windowActive = mixedLighting?.windowActive != false
-        let clear = glow && windowActive
+        let windowVisible = mixedLighting?.windowVisible != false
+        let clear = glow && windowVisible
         view.backgroundColor = clear ? .clear : .black
         view.isOpaque = !clear
         view.displayLayer.backgroundColor = (clear ? UIColor.clear : UIColor.black).cgColor

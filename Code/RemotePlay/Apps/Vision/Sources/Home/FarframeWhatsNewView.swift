@@ -2,8 +2,8 @@ import SwiftUI
 
 enum FarframeWhatsNewContent {
     static let dismissedVersionKey = "farframe.whatsNew.dismissedVersion"
-    static let currentReleaseVersion = "1.3"
-    static let contentID = "1.3-ambient-glow-rail"
+    static let currentReleaseVersion = "1.4"
+    static let contentID = "1.4-photos-recording"
 }
 
 struct FarframeWhatsNewView: View {
@@ -26,11 +26,15 @@ struct FarframeWhatsNewView: View {
                         ]
                     )
                     featureSection(
-                        title: "New in 1.3",
-                        subtitle: "Ambient glow in shared space, plus immersive rooms when you want them.",
+                        title: "New in 1.4",
+                        subtitle: "Easier setup and controls that stay out of your way.",
                         features: [
-                            .init(icon: "sparkles", tint: .purple, title: "Ambient glow in your space", detail: "Color from the game around the window while you stay in shared space. This is the highlight of 1.3."),
-                            .init(icon: "cube.transparent", tint: .orange, title: "Immersive environments", detail: "Mixed and Glass Arena add immersive glow and room options around your game when you want a full environment.")
+                            .init(icon: "record.circle", tint: .red, title: "Record your gameplay", detail: "Keep the winning moments. Capture your game with sound, ready to replay and share from Photos."),
+                            .init(icon: "hand.tap", tint: .cyan, title: "Tap to show or hide controls", detail: "Tap the game picture. Your control position and expanded or collapsed state stay the same."),
+                            .init(icon: "moon.fill", tint: .purple, title: "Dim your surroundings", detail: "Open Immersive, enter Mixed, then turn on Dim surroundings. Ambient glow also works in your regular window."),
+                            .init(icon: "slider.horizontal.3", tint: .mint, title: "Make the controls yours", detail: "Open Customize Controls to choose your buttons or reopen Controls guide. Drag the handle to move the rail."),
+                            .init(icon: "questionmark.circle", tint: .orange, title: "Help beside your sign-in", detail: "Open Sign-in help while pairing. Move its illustrated guide beside the sign-in window."),
+                            .init(icon: "moon.zzz.fill", tint: .blue, title: "End your session", detail: "End Session lets you rest the console or disconnect and leave it awake.")
                         ]
                     )
                 }
@@ -56,7 +60,7 @@ struct FarframeWhatsNewView: View {
                 .foregroundStyle(.cyan)
             Text("Welcome to Farframe")
                 .font(.largeTitle.bold())
-            Text("Wake your console, place the screen, and play. Version 1.3 adds ambient glow around the window in your space.")
+            Text("Wake your console, place the screen, and play. Here are the basics and the latest additions.")
                 .font(.title3)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -67,8 +71,8 @@ struct FarframeWhatsNewView: View {
     }
 
     private func featureSection(
-        title: String,
-        subtitle: String,
+        title: LocalizedStringKey,
+        subtitle: LocalizedStringKey,
         features: [FarframeFeature]
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -111,9 +115,9 @@ struct FarframeWhatsNewView: View {
 }
 
 private struct FarframeFeature: Identifiable {
-    var id: String { title }
+    var id: String { icon }
     let icon: String
     let tint: Color
-    let title: String
-    let detail: String
+    let title: LocalizedStringKey
+    let detail: LocalizedStringKey
 }

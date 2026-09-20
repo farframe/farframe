@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 enum VisionArenaExteriorStyle: String, CaseIterable, Identifiable, Sendable {
     case quietHorizon, orbitalTerrace, lightSculpture
@@ -17,6 +18,7 @@ enum VisionArenaGlow: String, CaseIterable, Identifiable {
     case low = "Low"
     case medium = "Medium"
     var id: Self { self }
+    var localizedTitle: LocalizedStringKey { LocalizedStringKey(rawValue) }
     var opacity: Float {
         switch self {
         case .off: 0

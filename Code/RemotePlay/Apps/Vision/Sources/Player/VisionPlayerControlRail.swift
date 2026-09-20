@@ -27,6 +27,7 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
     @State private var dragStart: VisionControlDock?
     private enum TabletSection: String, CaseIterable {
         case controls = "Controls", room = "Screen", settings = "Settings", stats = "Stats"
+        var localizedTitle: LocalizedStringKey { LocalizedStringKey(rawValue) }
     }
     @State private var tabletSection: TabletSection = .controls
     @State private var controlsExpanded = false
@@ -34,6 +35,8 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
     @State private var collapsedControlHasGaze = false
     @State private var showControlsMenu = false
     @State private var showSettings = false
+    @State private var showSessionChoices = false
+    @Environment(\.openWindow) private var openWindow
     @State private var didCopyDiagnosis = false
     @State private var pinnedVolumeDragStart: Float?
     @State private var isDraggingPinnedVolume = false
@@ -44,19 +47,27 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
             if presentation == .tablet { tablet }
             else { controlRail }
         }
+            .confirmationDialog("End Session", isPresented: $showSessionChoices, titleVisibility: .visible) {
+                Button("Rest and Disconnect") { endSession(true); onInteraction() }
+                Button("Disconnect Only") { endSession(false); onInteraction() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("To turn off your DualSense afterward, hold its physical PS button until the lights turn off.")
+            }
             .sheet(isPresented: $showSettings, onDismiss: onInteraction) {
-                VisionRemotePlaySettingsView(coordinator: coordinator, accessStore: accessStore)
+                VisionRemotePlaySettingsView(coordinator: coordinator, accessStore: accessStore, context: .gameplay)
             }
     }
 
     private var tablet: some View {
         VStack(spacing: 12) {
+            VisionGameplayRecordingStatus(coordinator: coordinator)
             HStack {
                 FarframeBrandMark(size: 28)
                 Text("FARFRAME").font(.headline)
                     .accessibilityIdentifier("farframe.arena.brand")
                 Spacer()
-                Button("PS Home") { coordinator.pulse(.playStation); onInteraction() }
+                Button("PS Home", systemImage: VisionPlayerControlID.psMenu.reference.symbol) { coordinator.pulse(.playStation); onInteraction() }
                     .accessibilityIdentifier("farframe.arena.psHome")
                 Menu {
                     Button("Glass Arena controls") { tabletSection = .room; onInteraction() }
@@ -70,10 +81,11 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
                 .help("Immersive environment")
                 .accessibilityIdentifier("farframe.arena.environmentMenu")
                 Button("Hide", systemImage: "minus") { hideTablet() }
+                    .disabled(coordinator.gameplayRecording.isBusy)
                     .accessibilityIdentifier("farframe.arena.hideControls")
             }
             Picker("Section", selection: $tabletSection) {
-                ForEach(TabletSection.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                ForEach(TabletSection.allCases, id: \.self) { Text($0.localizedTitle).tag($0) }
             }
             .pickerStyle(.segmented)
             .accessibilityIdentifier("farframe.arena.controlSection")
@@ -83,7 +95,7 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
                 case .room: roomControls()
                 case .settings:
                     VisionRemotePlaySettingsView(coordinator: coordinator, accessStore: accessStore,
-                        embedded: true, onDone: { tabletSection = .controls })
+                        context: .gameplay, embedded: true, onDone: { tabletSection = .controls })
                 case .stats:
                     ScrollView {
                         VisionPlayerHealthHUD(coordinator: coordinator, mode: "arena",
@@ -122,7 +134,9 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
             transaction.animation = nil
             transaction.disablesAnimations = true
         }
-        .geometryGroup()
+        // Use the new axis's intrinsic size in the same layout pass. A geometry
+        // group can retain the prior axis bounds as the ornament anchor moves.
+        .fixedSize()
         .padding(controlsExpanded ? 8 : 0)
         .background {
             if controlsExpanded {
@@ -132,9 +146,11 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
         }
         .foregroundStyle(.white)
         .preferredColorScheme(.dark)
-        .onChange(of: recallControls) { _, _ in
-            controlsExpanded = true
-            collapsedControlIsDimmed = false
+        .onChange(of: recallControls, initial: true) { _, value in
+            if value > 0 {
+                controlsExpanded = true
+                collapsedControlIsDimmed = false
+            }
         }
         .animation(.snappy, value: coordinator.pinnedPlayerControlIDs)
         .animation(.snappy, value: controlsExpanded)
@@ -192,7 +208,7 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
 
         if controlsExpanded {
             if let dock {
-                Image(systemName: "line.3.horizontal")
+                Image(systemName: VisionPlayerControlReference.move.symbol)
                     .frame(width: 44, height: 44)
                     .contentShape(Circle())
                     .contentShape(.hoverEffect, Circle())
@@ -220,16 +236,12 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
                         dock.wrappedValue.save()
                     }
             }
-            roomControls()
-            ForEach(
-                playerControlDescriptors.filter {
-                    coordinator.isPlayerControlPinned($0.id)
-                }
-            ) { control in
+            if coordinator.isPlayerControlPinned(.immersive) { roomControls() }
+            ForEach(coordinator.pinnedPlayerControlIDs.compactMap { descriptor(for: $0) }) { control in
                 ornamentButton(control)
             }
 
-            circleButton(title: "Customize Controls", symbol: "slider.horizontal.3") {
+            circleButton(title: VisionPlayerControlReference.customize.title, symbol: VisionPlayerControlReference.customize.symbol) {
                 showControlsMenu.toggle()
                 onInteraction()
             }
@@ -243,13 +255,8 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
         }
     }
 
-    /// One scrolling surface, not a fixed stack with a scrolling footer. The
-    /// summary, quality, diagnosis and volume blocks used to be pinned above a
-    /// `ScrollView` that wrapped only the control sections, so four content
-    /// blocks spent the 620pt budget and the lists the panel exists for were
-    /// left scrolling through a strip barely one row tall. Everything scrolls
-    /// now except the title row, which stays because it carries the two pieces
-    /// of live state the rail toggles from underneath this popover.
+    /// One scrolling surface: Video Settings, Primary, Audio, then the less
+    /// frequent console/session/diagnostic actions and help.
     private var controlsOverflowMenu: some View {
         VStack(alignment: .leading, spacing: 0) {
             if presentation == .rail {
@@ -263,17 +270,28 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     qualityPanel
-                    diagnosisExportPanel
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("PRIMARY").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
+                        ForEach([VisionPlayerControlID.showMain, .psMenu].compactMap { descriptor(for: $0) }) { control in
+                            controlRow(control)
+                        }
+                        if presentation == .rail { immersiveControlRow }
+                        else {
+                            Button("Immersive", systemImage: "cube.transparent") { tabletSection = .room }
+                        }
+                        ForEach([VisionPlayerControlID.recordGameplay, .streamHUD].compactMap { descriptor(for: $0) }) { control in
+                            controlRow(control)
+                        }
+                    }
                     volumeControlPanel
-
-                    controlSection(
-                        "Primary",
-                        ids: [.psMenu, .showMain, .streamHUD]
-                    )
-                    controlSection("Diagnostics", ids: [.copyDiagnosis])
                     controlSection("Console", ids: [.psOptions, .psCreate])
                     controlSection("Session", ids: [.sleep, .disconnect])
-                    controlSection("Audio", ids: [.volume])
+                    controlSection("Diagnostics", ids: [.copyDiagnosis])
+                    Button("Controls guide", systemImage: "questionmark.circle") {
+                        showControlsMenu = false
+                        openWindow(id: VisionWindowID.controlsHelp, value: VisionWindowID.controlsHelp)
+                        onInteraction()
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14)
@@ -321,54 +339,24 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
 
     private var qualityPanel: some View {
         let quality = coordinator.activeStreamQuality ?? coordinator.streamQuality
-        return VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                // The name now carries its own resolution, so appending
-                // "Quality" would only repeat the line beside it.
-                Label(quality.displayName, systemImage: "rectangle.and.text.magnifyingglass")
-                    .font(.caption.weight(.semibold))
-                Spacer(minLength: 6)
-                Text(quality.detail)
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.trailing)
+        return VStack(alignment: .leading, spacing: 6) {
+            Button(action: openSettings) {
+                HStack {
+                    Label("Video Settings", systemImage: "slider.horizontal.3")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                }
             }
-            Button("Video Settings", systemImage: "slider.horizontal.3", action: openSettings)
-            Text("Quality changes apply on the next connection.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            Text("Stream: \(quality.profile.resolution.rawValue) · \(quality.profile.framesPerSecond) FPS · \(quality.profile.targetBitrateKbps / 1_000) Mbps target")
+                .font(.caption).foregroundStyle(.secondary)
+            if let active = coordinator.activeStreamQuality, active != coordinator.streamQuality {
+                Text("Quality change pending. Disconnect, then Connect to apply.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-
-    /// The headset's only export path. There is no saved report and no share
-    /// sheet on visionOS, and nobody is going to retype a diagnosis while
-    /// wearing the device, so this panel sits in the menu rather than only
-    /// behind a rail button the user has to pin first.
-    private var diagnosisExportPanel: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button {
-                copyDiagnosis()
-            } label: {
-                Label(
-                    didCopyDiagnosis ? "Diagnosis Copied" : "Copy Diagnosis",
-                    systemImage: didCopyDiagnosis ? "checkmark" : "doc.on.doc"
-                )
-                .font(.caption.weight(.semibold))
-            }
-            .disabled(coordinator.activeSessionID == nil)
-
-            Text("Copies stream health without account or network identifiers.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
 
     /// The HUD shows the verdict and the first few findings; the clipboard
@@ -387,14 +375,17 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
     private var volumeControlPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label(coordinator.audioIsMuted ? "Volume Muted" : "Volume", systemImage: audioSymbol)
+                Label("Audio", systemImage: audioSymbol)
                     .font(.caption.weight(.semibold))
                 Spacer()
                 Text("\(volumePercent)%")
                     .font(.caption.monospacedDigit().weight(.semibold))
                     .foregroundStyle(.secondary)
+                if presentation == .rail { pinButton(.volume, label: "Volume") }
             }
-
+            Toggle("Mute game audio", isOn: $coordinator.audioIsMuted)
+            Text("Game volume is separate from headset volume.")
+                .font(.caption2).foregroundStyle(.secondary)
             Slider(
                 value: Binding(
                     get: { Double(coordinator.audioVolume) },
@@ -456,32 +447,7 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
             .accessibilityIdentifier("farframe.controls.action.\(control.id.rawValue)")
 
             if presentation == .rail {
-                Button {
-                    coordinator.setPlayerControl(
-                        control.id,
-                        pinned: coordinator.isPlayerControlPinned(control.id) == false
-                    )
-                } label: {
-                    let isPinned = coordinator.isPlayerControlPinned(control.id)
-                    Label(
-                        isPinned ? "Shown" : "Add",
-                        systemImage: isPinned ? "checkmark.circle.fill" : "plus.circle"
-                    )
-                    .font(.caption.weight(.semibold))
-                    .frame(width: 72)
-                    .padding(.vertical, 6)
-                    .foregroundStyle(isPinned ? .blue : .secondary)
-                    .background(
-                        isPinned ? Color.blue.opacity(0.14) : Color.secondary.opacity(0.10),
-                        in: Capsule()
-                    )
-                }
-                .buttonStyle(.plain)
-                .help(
-                    coordinator.isPlayerControlPinned(control.id)
-                        ? "Hide \(control.label)"
-                        : "Show \(control.label)"
-                )
+                pinButton(control.id, label: control.label)
             }
         }
         .padding(.horizontal, 10)
@@ -489,13 +455,60 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
+    private var immersiveControlRow: some View {
+        HStack(spacing: 10) {
+            roomControls()
+            Text(LocalizedStringKey(VisionPlayerControlID.immersive.reference.title))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            pinButton(.immersive, label: VisionPlayerControlID.immersive.reference.title)
+        }
+        .padding(10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func pinButton(_ id: VisionPlayerControlID, label: String) -> some View {
+        Button {
+            coordinator.setPlayerControl(
+                id,
+                pinned: coordinator.isPlayerControlPinned(id) == false
+            )
+        } label: {
+            let isPinned = coordinator.isPlayerControlPinned(id)
+            Label(
+                isPinned ? "Shown" : "Add",
+                systemImage: isPinned ? "checkmark.circle.fill" : "plus.circle"
+            )
+            .font(.caption.weight(.semibold))
+            .frame(width: 72)
+            .padding(.vertical, 6)
+            .foregroundStyle(isPinned ? .blue : .secondary)
+            .background(
+                isPinned ? Color.blue.opacity(0.14) : Color.secondary.opacity(0.10),
+                in: Capsule()
+            )
+        }
+        .buttonStyle(.plain)
+        .help(
+            coordinator.isPlayerControlPinned(id)
+                ? "Hide \(label)"
+                : "Show \(label)"
+        )
+    }
+
     private var playerControlDescriptors: [VisionPlayerControlDescriptor] {
         [
             VisionPlayerControlDescriptor(
+                id: .recordGameplay,
+                label: coordinator.recordingActionTitle,
+                symbol: coordinator.gameplayRecording.canStop ? "stop.circle.fill" : "record.circle",
+                detail: "Game picture and audio → Photos. Tap again to stop.",
+                isOn: coordinator.gameplayRecording.isBusy || coordinator.recordingPhotoOperationIsBusy
+            ) { coordinator.toggleGameplayRecording() },
+            VisionPlayerControlDescriptor(
                 id: .psMenu,
-                label: "PS Home",
-                symbol: "gamecontroller",
-                detail: "Opens the console control center"
+                label: VisionPlayerControlID.psMenu.reference.title,
+                symbol: VisionPlayerControlID.psMenu.reference.symbol,
+                detail: VisionPlayerControlID.psMenu.reference.detail
             ) {
                 coordinator.pulse(.playStation)
             },
@@ -510,36 +523,36 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
             },
             VisionPlayerControlDescriptor(
                 id: .psOptions,
-                label: "Options",
-                symbol: "line.3.horizontal",
-                detail: "Console Options button"
+                label: VisionPlayerControlID.psOptions.reference.title,
+                symbol: VisionPlayerControlID.psOptions.reference.symbol,
+                detail: VisionPlayerControlID.psOptions.reference.detail
             ) {
                 coordinator.pulse(.options)
             },
             VisionPlayerControlDescriptor(
                 id: .psCreate,
-                label: "Create",
-                symbol: "record.circle",
-                detail: "Opens the console capture and sharing menu"
+                label: VisionPlayerControlID.psCreate.reference.title,
+                symbol: VisionPlayerControlID.psCreate.reference.symbol,
+                detail: VisionPlayerControlID.psCreate.reference.detail
             ) {
                 coordinator.pulse(.create)
             },
             VisionPlayerControlDescriptor(
                 id: .showMain,
-                label: presentation == .tablet ? "Exit Room" : "Farframe Home",
+                label: presentation == .tablet ? "Exit Room" : VisionPlayerControlID.showMain.reference.title,
                 symbol: "macwindow",
                 detail: presentation == .tablet
                     ? "Returns to your window without disconnecting"
-                    : "Brings Farframe Home and Settings to the front",
+                    : VisionPlayerControlID.showMain.reference.detail,
                 usesBrandMark: true
             ) {
                 showHome()
             },
             VisionPlayerControlDescriptor(
                 id: .streamHUD,
-                label: "Stats",
-                symbol: "chart.xyaxis.line",
-                detail: "Shows live video, audio, and controller health",
+                label: VisionPlayerControlID.streamHUD.reference.title,
+                symbol: VisionPlayerControlID.streamHUD.reference.symbol,
+                detail: VisionPlayerControlID.streamHUD.reference.detail,
                 isOn: coordinator.streamHealthHUDEnabled
             ) {
                 if presentation == .tablet {
@@ -559,17 +572,17 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
             },
             VisionPlayerControlDescriptor(
                 id: .sleep,
-                label: "Rest Console",
-                symbol: "moon.zzz.fill",
-                detail: "Rests the console, then disconnects"
+                label: VisionPlayerControlID.sleep.reference.title,
+                symbol: VisionPlayerControlID.sleep.reference.symbol,
+                detail: VisionPlayerControlID.sleep.reference.detail
             ) {
-                endSession(true)
+                showSessionChoices = true
             },
             VisionPlayerControlDescriptor(
                 id: .disconnect,
-                label: "Disconnect",
-                symbol: "cable.connector.slash",
-                detail: "Disconnects and leaves the console awake"
+                label: VisionPlayerControlID.disconnect.reference.title,
+                symbol: VisionPlayerControlID.disconnect.reference.symbol,
+                detail: VisionPlayerControlID.disconnect.reference.detail
             ) {
                 endSession(false)
             },
@@ -686,9 +699,7 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
 
     @ViewBuilder
     private func controlGlyph(_ control: VisionPlayerControlDescriptor, size: CGFloat) -> some View {
-        if control.id == .psMenu {
-            Text("PS").font(.system(size: size * 0.65, weight: .semibold))
-        } else if control.usesBrandMark {
+        if control.usesBrandMark {
             FarframeBrandMark(size: size)
         } else {
             Image(systemName: control.symbol)
@@ -706,9 +717,7 @@ struct VisionPlayerControlRail<RoomControls: View>: View {
     ) -> some View {
         Button(action: action) {
             Group {
-                if title == "PS" {
-                    Text("PS").font(.body.weight(.semibold))
-                } else if usesBrandMark {
+                if usesBrandMark {
                     FarframeBrandMark(size: 28)
                 } else {
                     Image(systemName: symbol)

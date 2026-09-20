@@ -16,6 +16,7 @@ public actor PlayStationRemotePlayStreamingSession:
     public nonisolated let id: UUID
     public nonisolated let experience: ExperienceDescriptor
     public nonisolated let videoSurface: SampleBufferVideoSurfaceBinding
+    public nonisolated let gameplayRecorder = GameplayRecorder()
     public nonisolated let audioControls: AudioPlaybackControls
     public nonisolated var videoDecoderDiagnostics: VideoDecoderDiagnosticsProvider {
         coordinator.videoDecoderDiagnostics
@@ -61,9 +62,22 @@ public actor PlayStationRemotePlayStreamingSession:
 
     public func start() async throws {
         await videoSurface.synchronizeThroughCurrentOperations()
+        let previous = await coordinator.snapshot()
+        if previous.state == .idle || previous.state == .disconnected || previous.state == .failed {
+            gameplayRecorder.resetSource()
+        }
         _ = try await coordinator.connect(
             consoleID: consoleID,
             qualityProfile: qualityProfile,
+            mediaHandler: { [gameplayRecorder] _, event in
+                switch event {
+                case .audioFormat(let format): gameplayRecorder.configureAudio(format)
+                case .decodedAudio(let block): gameplayRecorder.submitAudio(block)
+                case .displayBlocked(let blocked): gameplayRecorder.setContentBlocked(blocked)
+                case .encodedVideo: break
+                }
+            },
+            decodedFrameHandler: { [gameplayRecorder] frame in gameplayRecorder.submitVideo(frame) },
             controllerFeedbackHandler: controllerFeedbackHandler
         )
     }
@@ -71,6 +85,7 @@ public actor PlayStationRemotePlayStreamingSession:
     /// Repeated calls are intentional: a failed native teardown retains its
     /// resources so the next Stop can retry the same ordered stop/join path.
     public func stop() async {
+        await gameplayRecorder.stop()
         await coordinator.disconnect()
     }
 
@@ -83,11 +98,16 @@ public actor PlayStationRemotePlayStreamingSession:
     }
 
     public func restAndDisconnect() async throws {
+        await gameplayRecorder.stop()
         try await coordinator.restAndDisconnect()
     }
 
     public func snapshot() async -> PlayStationSessionSnapshot {
-        await coordinator.snapshot()
+        let result = await coordinator.snapshot()
+        if result.state == .failed || result.state == .disconnected {
+            await gameplayRecorder.stop()
+        }
+        return result
     }
 
     public func audioSnapshot() async -> PCMAudioPlaybackSnapshot {

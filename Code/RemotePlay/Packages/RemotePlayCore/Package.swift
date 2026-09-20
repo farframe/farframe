@@ -46,6 +46,7 @@ let package = Package(
                 .linkedFramework("Metal"),
                 .linkedFramework("MetalPerformanceShaders"),
                 .linkedFramework("QuartzCore"),
+                .linkedFramework("Photos"),
                 .linkedFramework("VideoToolbox"),
             ]
         ),

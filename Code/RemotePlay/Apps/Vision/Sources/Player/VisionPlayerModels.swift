@@ -1,25 +1,6 @@
 import AppleMediaCore
 import ExperienceDomain
 
-/// The supported, production-safe controls that can be pinned to the Vision
-/// player's ornament. Raw values intentionally match the known-good app so an
-/// in-place upgrade preserves the user's existing rail without importing any
-/// retired display or capture experiments.
-enum VisionPlayerControlID: String, CaseIterable, Hashable, Identifiable, Sendable {
-    case psMenu
-    case psOptions
-    case psCreate
-    case psHome
-    case sleep
-    case showMain
-    case disconnect
-    case streamHUD
-    case copyDiagnosis
-    case volume
-
-    var id: String { rawValue }
-}
-
 struct VisionPlayerDiagnostics: Sendable {
     let quality: VisionStreamQuality
     let video: SampleBufferVideoPresentationSnapshot

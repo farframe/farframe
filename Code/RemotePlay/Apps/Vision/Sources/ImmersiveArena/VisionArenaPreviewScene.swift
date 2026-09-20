@@ -68,7 +68,7 @@ struct VisionArenaPreviewLauncher: View {
         .buttonStyle(.plain)
         .background(.regularMaterial, in: Circle())
         .contentShape(Circle())
-        .disabled(state.phase != .closed)
+        .disabled(state.phase != .closed || state.mixedLighting.phase != .closed)
         .help("Play in Glass Arena")
         .accessibilityLabel("Play in Glass Arena")
         .accessibilityIdentifier("farframe.player.enterArena")
@@ -86,7 +86,7 @@ struct VisionArenaPreviewLauncher: View {
     }
 
     private func openRoom() {
-        guard state.phase == .closed else { return }
+        guard state.phase == .closed, state.mixedLighting.phase == .closed else { return }
         let entryID = state.beginOpening()
         state.reduceMotion = reduceMotion
         Task { @MainActor in
@@ -120,7 +120,7 @@ struct VisionArenaPreviewLauncher: View {
                     state.phase = .closing
                     state.updateAccess(false)
                     if let coordinator, ticket != nil { await coordinator.disconnect() }
-                    openWindow(id: VisionWindowID.setup)
+                    openWindow(id: VisionWindowID.setup, value: VisionWindowID.setup)
                     await dismissImmersiveSpace()
                     if state.entryAttemptID == entryID { state.tearDown() }
                     return
@@ -148,7 +148,7 @@ struct VisionArenaPreviewLauncher: View {
                     }
                     state.phase = .closing
                     let restored = await state.restoreFlat(ticket: ticket, coordinator: coordinator) {
-                        openWindow(id: VisionWindowID.player)
+                        openWindow(id: VisionWindowID.player, value: VisionWindowID.player)
                     }
                     guard state.entryAttemptID == entryID else { return }
                     await dismissImmersiveSpace()
@@ -165,7 +165,7 @@ struct VisionArenaPreviewLauncher: View {
             case .userCancelled, .error:
                 if let ticket, let coordinator {
                     await state.restoreFlat(ticket: ticket, coordinator: coordinator) {
-                        openWindow(id: VisionWindowID.player)
+                        openWindow(id: VisionWindowID.player, value: VisionWindowID.player)
                     }
                 }
                 guard state.entryAttemptID == entryID else { return }
@@ -173,7 +173,7 @@ struct VisionArenaPreviewLauncher: View {
             @unknown default:
                 if let ticket, let coordinator {
                     await state.restoreFlat(ticket: ticket, coordinator: coordinator) {
-                        openWindow(id: VisionWindowID.player)
+                        openWindow(id: VisionWindowID.player, value: VisionWindowID.player)
                     }
                 }
                 guard state.entryAttemptID == entryID else { return }
@@ -318,16 +318,16 @@ private struct VisionArenaPreviewView: View {
             guard let ticket else {
                 // Home was closed for the static room too. System dismissal
                 // needs the same reachable return path as the Exit button.
-                openWindow(id: VisionWindowID.setup)
+                openWindow(id: VisionWindowID.setup, value: VisionWindowID.setup)
                 return
             }
             // Covers the Digital Crown/system dismissal and a closed window.
             // Explicit Exit already completed this transfer, making it a no-op.
             Task { @MainActor in
                 await state.restoreFlat(ticket: ticket, coordinator: coordinator) {
-                    openWindow(id: VisionWindowID.player)
+                    openWindow(id: VisionWindowID.player, value: VisionWindowID.player)
                 }
-                if coordinator.activeSessionID == nil { openWindow(id: VisionWindowID.setup) }
+                if coordinator.activeSessionID == nil { openWindow(id: VisionWindowID.setup, value: VisionWindowID.setup) }
             }
         }
     }
@@ -340,7 +340,7 @@ private struct VisionArenaPreviewView: View {
         Task { @MainActor in
             if state.liveTicket != nil { await coordinator.disconnect() }
             guard state.entryAttemptID == entryID else { return }
-            openWindow(id: VisionWindowID.setup)
+            openWindow(id: VisionWindowID.setup, value: VisionWindowID.setup)
             await dismissImmersiveSpace()
         }
     }
@@ -353,7 +353,7 @@ private struct VisionArenaPreviewView: View {
         Task { @MainActor in
             if let ticket {
                 let restored = await state.restoreFlat(ticket: ticket, coordinator: coordinator) {
-                    openWindow(id: VisionWindowID.player)
+                    openWindow(id: VisionWindowID.player, value: VisionWindowID.player)
                 }
                 if !restored, state.phase == .open,
                    coordinator.arenaPresentation.phase == .immersive(ticket) {
@@ -363,7 +363,7 @@ private struct VisionArenaPreviewView: View {
                 }
             }
             guard state.entryAttemptID == entryID else { return }
-            if showHome || ticket == nil || coordinator.activeSessionID == nil { openWindow(id: VisionWindowID.setup) }
+            if showHome || ticket == nil || coordinator.activeSessionID == nil { openWindow(id: VisionWindowID.setup, value: VisionWindowID.setup) }
             await dismissImmersiveSpace()
         }
     }
@@ -375,7 +375,7 @@ private struct VisionArenaPreviewView: View {
         Task { @MainActor in
             if rest { await coordinator.restAndDisconnect() } else { await coordinator.disconnect() }
             guard state.entryAttemptID == entryID else { return }
-            openWindow(id: VisionWindowID.setup)
+            openWindow(id: VisionWindowID.setup, value: VisionWindowID.setup)
             await dismissImmersiveSpace()
         }
     }
@@ -421,7 +421,7 @@ private struct VisionArenaControlsWindow: View {
             VisionArenaCoveragePicker(selection: $state.lightCoverage, pillarGlow: $state.pillarGlow, available: state.wrapAvailable)
             Text("Ambient Glow").font(.subheadline.weight(.semibold))
             Picker("Ambient Glow", selection: $state.glow) {
-                ForEach(VisionArenaGlow.allCases) { level in Text(level.rawValue).tag(level) }
+                ForEach(VisionArenaGlow.allCases) { level in Text(level.localizedTitle).tag(level) }
             }
             .pickerStyle(.segmented)
             .accessibilityIdentifier("farframe.arena.glow")

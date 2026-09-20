@@ -69,16 +69,8 @@ final class VisionRemotePlayCoordinator {
         static let videoEnhancement = "PSPlayVision.videoEnhancement"
         static let backgroundDisconnectMinutes = "PSPlayVision.backgroundDisconnectMinutes"
         static let pinnedPlayerControls = "PSPlayVision.pinnedPlayerControls"
+        static let pinnedPlayerControlsRevision = "farframe.vision.controls.revision"
     }
-
-    private static let defaultPinnedPlayerControls: [VisionPlayerControlID] = [
-        .psMenu,
-        .showMain,
-        .streamHUD,
-        .sleep,
-        .disconnect,
-        .volume,
-    ]
 
     private let repository: PlayStationConsoleRepository
     private let wakeService: PlayStationWakeService
@@ -106,6 +98,7 @@ final class VisionRemotePlayCoordinator {
     private var playerSceneWasInterrupted = false
     private var playerWindowOwnerID: UUID?
     private var visibleSetupWindowIDs: Set<UUID> = []
+    private var activeSetupWindowIDs: Set<UUID> = []
     #if os(visionOS)
     private(set) var arenaPresentation = VisionArenaPresentationRoute()
     private(set) var flatPresentationIsActive = true
@@ -171,6 +164,110 @@ final class VisionRemotePlayCoordinator {
     private(set) var activeConsoleID: UUID?
     private(set) var activeStreamQuality: VisionStreamQuality?
     private(set) var remoteDisplayIsBlocked = false
+    private(set) var gameplayRecording = GameplayRecordingSnapshot()
+    var recordingNotice: String?
+    private(set) var recordingPhotoOperationIsBusy = false
+    private let photoExporter = GameplayPhotoExporter()
+    private var recordingObserver: Task<Void, Never>?
+    private var recordingNoticeDismissal: Task<Void, Never>?
+    private var recordingSource: GameplayRecorder?
+    private static let pendingPhotoKey = "farframe.vision.pendingPhotoMovie"
+    // Persist just the unsaved file, not an in-app recordings library. A failed
+    // Photos import stays recoverable even after the player closes or app quits.
+    var pendingPhotoMovie: URL? {
+        guard let path = UserDefaults.standard.string(forKey: Self.pendingPhotoKey),
+              FileManager.default.fileExists(atPath: path) else { return nil }
+        return URL(fileURLWithPath: path)
+    }
+    var recordingActionTitle: String {
+        if gameplayRecording.canStop { return "Stop Recording" }
+        if recordingPhotoOperationIsBusy { return pendingPhotoMovie == nil ? "Starting…" : "Saving…" }
+        if gameplayRecording.isBusy { return "Saving…" }
+        if pendingPhotoMovie != nil { return "Save to Photos" }
+        return "Record Game Window"
+    }
+
+    func toggleGameplayRecording() {
+        if gameplayRecording.isBusy {
+            if gameplayRecording.canStop, let recorder = recordingSource {
+                Task { await recorder.stop() }
+            }
+            return
+        }
+        guard !recordingPhotoOperationIsBusy else { return }
+        if pendingPhotoMovie != nil { retryPhotoSave(); return }
+        guard let session = activeSession, case .streaming = phase, !remoteDisplayIsBlocked else { return }
+        recordingNoticeDismissal?.cancel()
+        recordingPhotoOperationIsBusy = true
+        recordingNotice = "Allow access to Photos…"
+        Task { [weak self] in
+            guard let self else { return }
+            let allowed = await photoExporter.requestAccess()
+            recordingPhotoOperationIsBusy = false
+            guard allowed else {
+                recordingNotice = "Allow Farframe to add videos to Photos in Settings."
+                return
+            }
+            // The session can end or be replaced while the system prompt is up.
+            guard activeSessionID == session.id, case .streaming = phase,
+                  !remoteDisplayIsBlocked else { return }
+            let directory = URL.documentsDirectory.appendingPathComponent("Gameplay Exports", isDirectory: true)
+            let url = directory.appendingPathComponent("Farframe-\(UUID()).mp4")
+            do {
+                try session.gameplayRecorder.start(to: url)
+                recordingSource = session.gameplayRecorder
+                gameplayRecording = session.gameplayRecorder.snapshot()
+                recordingNotice = nil
+                recordingObserver = Task { [weak self, recorder = session.gameplayRecorder] in
+                    while !Task.isCancelled {
+                        let result = recorder.snapshot()
+                        guard let self else { return }
+                        self.gameplayRecording = result
+                        if !result.isBusy {
+                            self.recordingSource = nil
+                            if result.phase == .saved, let url = result.fileURL {
+                                UserDefaults.standard.set(url.path, forKey: Self.pendingPhotoKey)
+                                await self.saveMovieToPhotos(url)
+                            } else { self.recordingNotice = result.message }
+                            return
+                        }
+                        do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+                    }
+                }
+            } catch { recordingNotice = error.localizedDescription }
+        }
+    }
+
+    func retryPhotoSave() {
+        guard !recordingPhotoOperationIsBusy, !gameplayRecording.isBusy,
+              let url = pendingPhotoMovie else { return }
+        recordingPhotoOperationIsBusy = true
+        Task { await saveMovieToPhotos(url) }
+    }
+
+    private func saveMovieToPhotos(_ url: URL) async {
+        recordingPhotoOperationIsBusy = true
+        recordingNotice = "Saving to Photos…"
+        defer { recordingPhotoOperationIsBusy = false }
+        do {
+            try await photoExporter.save(url)
+            UserDefaults.standard.removeObject(forKey: Self.pendingPhotoKey)
+            recordingNotice = "Saved to Photos"
+            recordingNoticeDismissal?.cancel()
+            recordingNoticeDismissal = Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                guard let self, !self.gameplayRecording.isBusy,
+                      !self.recordingPhotoOperationIsBusy,
+                      self.recordingNotice == "Saved to Photos" else { return }
+                self.recordingNotice = nil
+            }
+            // Delete only this staging file after Photos confirms the import.
+            // Build8's previously saved clips remain untouched.
+            try? FileManager.default.removeItem(at: url)
+        } catch {
+            recordingNotice = "Couldn’t save to Photos. Your video is kept safely. Retry or share it."
+        }
+    }
     var audioVolume: Float = 0.7 {
         didSet {
             let clampedVolume = min(1, max(0, audioVolume.isFinite ? audioVolume : 0))
@@ -265,6 +362,8 @@ final class VisionRemotePlayCoordinator {
         }
     }
 
+    var setupWindowIsActive: Bool { !activeSetupWindowIDs.isEmpty }
+
     var setupWindowIsPresented: Bool {
         visibleSetupWindowIDs.isEmpty == false
     }
@@ -302,19 +401,15 @@ final class VisionRemotePlayCoordinator {
         self.backgroundDisconnectMinutes = defaults.object(
             forKey: PreferenceKey.backgroundDisconnectMinutes
         ) == nil ? 5 : defaults.integer(forKey: PreferenceKey.backgroundDisconnectMinutes)
-        let rawPinnedControls = defaults.stringArray(
-            forKey: PreferenceKey.pinnedPlayerControls
-        ) ?? []
-        var seenPinnedControls: Set<VisionPlayerControlID> = []
-        let supportedPinnedControls = rawPinnedControls
-            .compactMap(VisionPlayerControlID.init(rawValue:))
-            .filter { seenPinnedControls.insert($0).inserted }
-        let previousDefault: [VisionPlayerControlID] = [
-            .psMenu, .showMain, .streamHUD, .sleep, .disconnect, .psOptions, .volume
-        ]
-        self.pinnedPlayerControlIDs = supportedPinnedControls.isEmpty || supportedPinnedControls == previousDefault
-            ? Self.defaultPinnedPlayerControls
-            : supportedPinnedControls
+        let resolvedPins = VisionPlayerControlPreferences.resolve(
+            saved: defaults.stringArray(forKey: PreferenceKey.pinnedPlayerControls),
+            revision: defaults.integer(forKey: PreferenceKey.pinnedPlayerControlsRevision)
+        )
+        self.pinnedPlayerControlIDs = resolvedPins
+        // Property observers do not persist values assigned during initialization.
+        defaults.set(resolvedPins.map(\.rawValue), forKey: PreferenceKey.pinnedPlayerControls)
+        defaults.set(VisionPlayerControlPreferences.revision,
+                     forKey: PreferenceKey.pinnedPlayerControlsRevision)
 
         let storedBitrate = defaults.integer(forKey: PreferenceKey.streamQuality)
         self.streamQuality = switch storedBitrate {
@@ -677,7 +772,13 @@ final class VisionRemotePlayCoordinator {
         visibleSetupWindowIDs.insert(instanceID)
     }
 
+    func updateSetupWindowActivity(_ instanceID: UUID, isActive: Bool) {
+        if isActive { activeSetupWindowIDs.insert(instanceID) }
+        else { activeSetupWindowIDs.remove(instanceID) }
+    }
+
     func resignSetupWindow(_ instanceID: UUID) {
+        activeSetupWindowIDs.remove(instanceID)
         visibleSetupWindowIDs.remove(instanceID)
     }
 

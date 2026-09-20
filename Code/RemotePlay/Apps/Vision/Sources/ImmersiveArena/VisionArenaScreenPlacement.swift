@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// Preset geometry in meters. Direct manipulation uses the same size limits.
 struct VisionArenaScreenPlacement: Equatable {
@@ -17,6 +18,7 @@ struct VisionArenaScreenPlacement: Equatable {
         case cinema = "Cinema 1", cinema2 = "Cinema 2"
         case seated = "Seated", reclined = "Reclined", ceiling = "Ceiling"
         var id: String { rawValue }
+        var localizedTitle: LocalizedStringKey { LocalizedStringKey(rawValue) }
         var viewingDistance: Float? {
             switch self {
             case .cinema: VisionArenaScreenPlacement.cinemaDistance

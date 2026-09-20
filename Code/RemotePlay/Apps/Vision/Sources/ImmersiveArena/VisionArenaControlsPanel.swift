@@ -32,7 +32,7 @@ struct VisionArenaControlsPanel<Content: View>: View {
                 LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 10) {
                     ForEach(VisionArenaScreenPlacement.Preset.allCases) { preset in
                         Button { selectPreset(preset) } label: {
-                            Text(preset.rawValue)
+                            Text(preset.localizedTitle)
                                 .frame(maxWidth: .infinity, minHeight: 36)
                         }
                         .tint(selectedPreset == preset ? .accentColor : .white.opacity(0.12))

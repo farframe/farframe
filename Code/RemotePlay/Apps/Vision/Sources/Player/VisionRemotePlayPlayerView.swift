@@ -20,13 +20,17 @@ struct VisionRemotePlayPlayerView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.scenePhase) private var scenePhase
     #if os(visionOS)
+    @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
     @Environment(\.physicalMetrics) private var physicalMetrics
     #endif
     @State private var controlDock = VisionControlDock.load()
     @State private var playerSize: CGSize = .zero
     @State private var recallControls = 0
+    @State private var controlsVisible = true
+    @AppStorage("farframe.vision.controlsGuide.seenRevision") private var controlsGuideSeenRevision = 0
     @State private var instanceID = UUID()
     @State private var lifecycle = VisionPlayerLifecycle()
+    @State private var isReturningHome = false
     @FocusState private var playerFocused: Bool
 
     var body: some View {
@@ -36,8 +40,17 @@ struct VisionRemotePlayPlayerView: View {
                 ZStack {
                     flatPresentation(videoSurface: videoSurface, sessionID: sessionID)
                         .contentShape(Rectangle())
-                        .onTapGesture { recallControls += 1; playerFocused = true }
+                        .onTapGesture { controlsVisible.toggle(); playerFocused = true }
+                        .accessibilityAction(named: "Toggle Controls") { controlsVisible.toggle() }
                     connectionOverlay
+                    VStack {
+                        VisionGameplayRecordingStatus(coordinator: coordinator)
+                        Spacer()
+                    }
+                    .padding(16)
+                    .opacity(controlsVisible ? 1 : 0)
+                    .allowsHitTesting(controlsVisible)
+                    .accessibilityHidden(!controlsVisible)
 
                     if coordinator.remoteDisplayIsBlocked {
                         restrictedContentOverlay
@@ -128,14 +141,18 @@ struct VisionRemotePlayPlayerView: View {
                     }
                 }
                 .configuredDock($controlDock, size: playerSize, recall: recallControls)
+                .opacity(controlsVisible ? 1 : 0)
+                .allowsHitTesting(controlsVisible)
+                .accessibilityHidden(!controlsVisible)
             }
         }
         .onAppear {
             coordinator.claimPlayerWindow(instanceID)
             let event = lifecycle.appeared(activity(for: scenePhase))
             reconcileActivity(scenePhase, event: event)
-            arenaState?.mixedLighting.windowActive = scenePhase == .active
+            arenaState?.mixedLighting.windowVisible = scenePhase != .background
             playerFocused = true
+            offerControlsGuideIfNeeded()
         }
         .task(id: hasNoSession) {
             // Home only opens this window after a surface exists, so being here
@@ -149,6 +166,9 @@ struct VisionRemotePlayPlayerView: View {
             guard hasNoSession else { return }
             returnToHome()
         }
+        .onChange(of: coordinator.setupWindowIsActive) { _, active in
+            if active && hasNoSession { returnToHome() }
+        }
         .onDisappear {
             lifecycle.disappeared()
             let closingSessionID = coordinator.activeSessionID
@@ -159,7 +179,7 @@ struct VisionRemotePlayPlayerView: View {
                 // Never let that delayed callback stop the replacement session.
                 await coordinator.playerWindowClosed(ifSessionMatches: closingSessionID)
                 if coordinator.activeSessionID == nil {
-                    openWindow(id: VisionWindowID.setup)
+                    openWindow(id: VisionWindowID.setup, value: VisionWindowID.setup)
                 }
             }
         }
@@ -168,11 +188,12 @@ struct VisionRemotePlayPlayerView: View {
                 playerFocused = true
                 // Home hides only once video is actually flowing, so the user
                 // never watches every window vanish while Connect is pending.
-                dismissWindow(id: VisionWindowID.setup)
+                dismissWindow(id: VisionWindowID.setup, value: VisionWindowID.setup)
+                offerControlsGuideIfNeeded()
             }
         }
         .onChange(of: scenePhase) { _, phase in
-            arenaState?.mixedLighting.windowActive = phase == .active
+            arenaState?.mixedLighting.windowVisible = phase != .background
             reconcileActivity(phase, event: lifecycle.changed(activity(for: phase)))
         }
         #if os(visionOS)
@@ -187,6 +208,15 @@ struct VisionRemotePlayPlayerView: View {
         }
         #endif
 
+    }
+
+    private func offerControlsGuideIfNeeded() {
+        guard case .streaming = coordinator.phase,
+              controlsGuideSeenRevision < VisionPlayerControlsGuide.revision else { return }
+        controlsGuideSeenRevision = VisionPlayerControlsGuide.revision
+        controlsVisible = true
+        recallControls += 1
+        openWindow(id: VisionWindowID.controlsHelp, value: VisionWindowID.controlsHelp)
     }
 
     private func activity(for phase: ScenePhase) -> VisionPlayerLifecycle.Activity {
@@ -349,35 +379,49 @@ struct VisionRemotePlayPlayerView: View {
         }
     }
 
-    /// Opens Home, then closes this player window. `openWindow` on a single
-    /// `Window` scene brings an existing Home forward, so this never consults
+    /// Opens Home, then closes this player window. The stable presentation
+    /// value brings an existing Home forward, so this never consults
     /// the coordinator's visibility set to decide *whether* to open Home, which
     /// can go stale when the system destroys a scene without an `onDisappear`.
     ///
-    /// It does wait for Home before dismissing. Streaming dismisses Home, so at
-    /// disconnect the player is usually the app's only window, and visionOS
-    /// refuses to close the last one: a single `Task.yield()` was not enough for
-    /// the new Home scene to exist, the dismiss was swallowed, and the owner was
-    /// left staring at an orphaned "No Active Session" player on 2026-09-06.
-    /// The wait is bounded and the dismiss is issued either way, so a stale or
-    /// never-arriving visibility signal costs a short delay, never the close.
+    /// Wait for Home to become active, then dismiss the exact player value.
+    /// Appearance alone does not prove the new scene finished connecting.
+    /// Every asynchronous boundary rechecks that no replacement session exists.
     private func returnToHome() {
+        guard hasNoSession, lifecycle.isPresented, !isReturningHome else { return }
+        isReturningHome = true
         Task { @MainActor in
-            openWindow(id: VisionWindowID.setup)
+            defer { isReturningHome = false }
+            openWindow(id: VisionWindowID.setup, value: VisionWindowID.setup)
             for _ in 0..<Self.homeReadinessPollCount {
-                if coordinator.setupWindowIsPresented { break }
+                guard hasNoSession, lifecycle.isPresented else { return }
+                if coordinator.setupWindowIsActive { break }
                 try? await Task.sleep(for: .milliseconds(50))
             }
-            dismissWindow(id: VisionWindowID.player)
+            // An appeared view may still be connecting or no longer visible.
+            // Wait for Home's active scene; a later activation retries this path.
+            guard hasNoSession, lifecycle.isPresented, coordinator.setupWindowIsActive else { return }
+            #if os(visionOS)
+            if let mixed = arenaState?.mixedLighting, mixed.phase == .open {
+                await mixed.dismiss { await dismissImmersiveSpace() }
+            }
+            #endif
+            // Dismissing an immersive space and connecting Home both finish
+            // asynchronously. Retry only this empty player, never a new session.
+            for _ in 0..<3 {
+                guard hasNoSession, lifecycle.isPresented else { return }
+                dismissWindow(id: VisionWindowID.player, value: VisionWindowID.player)
+                try? await Task.sleep(for: .milliseconds(250))
+            }
         }
     }
 
-    /// Up to one second of 50 ms polls.
-    private static let homeReadinessPollCount = 20
+    /// Up to three seconds; a later Home activation also retries.
+    private static let homeReadinessPollCount = 60
 
     /// Always brings Home forward. Closing Home is done on Home itself.
     private func showMainWindow() {
-        openWindow(id: VisionWindowID.setup)
+        openWindow(id: VisionWindowID.setup, value: VisionWindowID.setup)
     }
 
 }

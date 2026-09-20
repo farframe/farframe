@@ -7,14 +7,15 @@ import Spatial
 import SwiftUI
 import UIKit
 
-/// Mixed immersion adds wall lights. Screen glow lives on the player window
-/// and uses the same Off/Low/Medium and Nearby/Standard/Wide settings.
+/// Screen glow stays on the player window. One existing mixed space supports
+/// optional wall lighting and dimming, both explicitly inside Mixed immersion.
 @MainActor @Observable
 final class VisionMixedLightingState {
     static let spaceID = "farframe-mixed-lighting"
     enum Phase { case closed, opening, open, closing }
     var phase: Phase = .closed
     var entryID = UUID()
+    @ObservationIgnored private var dismissalInFlight = false
     @ObservationIgnored private let defaults: UserDefaults
     var level: VisionArenaGlow = .medium {
         didSet { defaults.set(level.rawValue, forKey: "farframe.vision.mixed.level") }
@@ -25,6 +26,7 @@ final class VisionMixedLightingState {
     enum Spread: String, CaseIterable, Identifiable {
         case nearby = "Nearby", standard = "Standard", wide = "Wide"
         var id: Self { self }
+        var localizedTitle: LocalizedStringKey { LocalizedStringKey(rawValue) }
         var radius: Float {
             switch self { case .nearby: 3; case .standard: 4; case .wide: 5 }
         }
@@ -32,12 +34,16 @@ final class VisionMixedLightingState {
             switch self { case .nearby: 55; case .standard: 65; case .wide: 75 }
         }
     }
+    var dimSurroundings = false {
+        didSet { defaults.set(dimSurroundings, forKey: "farframe.vision.mixed.dimSurroundings") }
+    }
     var spread: Spread = .standard {
         didSet { defaults.set(spread.rawValue, forKey: "farframe.vision.mixed.spread") }
     }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        dimSurroundings = defaults.bool(forKey: "farframe.vision.mixed.dimSurroundings")
         level = defaults.string(forKey: "farframe.vision.mixed.level")
             .flatMap(VisionArenaGlow.init(rawValue:)) ?? .medium
         spread = defaults.string(forKey: "farframe.vision.mixed.spread")
@@ -52,17 +58,33 @@ final class VisionMixedLightingState {
         refresh()
     }
 
-    func selectLevel(_ value: VisionArenaGlow) {
-        level = value
+    enum GlowPreset: String, CaseIterable, Identifiable {
+        case off = "Off", low = "Low", medium = "Medium", wide = "Wide"
+        var id: Self { self }
+    }
+    var glowPreset: GlowPreset {
+        if level == .off { return .off }
+        if spread == .wide { return .wide }
+        return level == .low ? .low : .medium
+    }
+    func selectGlowPreset(_ preset: GlowPreset) {
+        switch preset {
+        case .off: level = .off
+        case .low: level = .low; spread = .nearby
+        case .medium: level = .medium; spread = .standard
+        case .wide: level = .medium; spread = .wide
+        }
         refresh()
     }
     var windowCenter: Point3D?
     var windowTransform: AffineTransform3D?
     var windowSize: Size3D?
     var windowExtentMeters: SIMD2<Float>?
-    var windowActive = true
-    var spaceActive = true
+    // Inactive can still be visible while a popover or system capture owns focus.
+    var windowVisible = true
+    var spaceVisible = true
     var reduceMotion = false
+    private(set) var thermalState = ProcessInfo.processInfo.thermalState
     var accessGranted = false
     var message: String?
     private(set) var windowAttached = false
@@ -154,10 +176,21 @@ final class VisionMixedLightingState {
         root.orientation = converted.rotation
         // Physical light radius is in meters, independent of SwiftUI point scale.
         root.scale = .one
+        // Follow all four screen edges as the window grows. Fixed offsets kept
+        // every emitter clustered in the middle of a large game window.
+        let extent = windowExtentMeters ?? SIMD2<Float>(0.94, 0.66)
+        let halfWidth = extent.x.isFinite ? max(0.1, extent.x / 2 - 0.05) : 0.42
+        let halfHeight = extent.y.isFinite ? max(0.1, extent.y / 2 - 0.05) : 0.28
+        let positions: [SIMD3<Float>] = [
+            [-halfWidth, 0, 0.1], [halfWidth, 0, 0.1],
+            [0, halfHeight, 0.1], [0, -halfHeight, 0.1]
+        ]
+        for (light, position) in zip(lights, positions) { light.position = position }
         refresh()
     }
 
     func refresh() {
+        thermalState = ProcessInfo.processInfo.thermalState
         if canSampleColors, let layer, let surface {
             startSamplingIfNeeded(layer: layer, surface: surface)
         } else if level == .off || layer == nil {
@@ -178,14 +211,13 @@ final class VisionMixedLightingState {
     }
 
     private var canSampleColors: Bool {
-        let thermal = ProcessInfo.processInfo.thermalState
-        return windowAttached && windowActive && level != .off && !reduceMotion
-            && thermal != .serious && thermal != .critical
+        return windowAttached && windowVisible && level != .off && !reduceMotion
+            && thermalState != .serious && thermalState != .critical
             && layer != nil && surface != nil
     }
 
     private var canPlaceWallLights: Bool {
-        phase == .open && spaceActive && canSampleColors && Self.supported
+        phase == .open && spaceVisible && canSampleColors && Self.supported
             && lightBoost > 1.05
             && windowCenter != nil && windowTransform != nil
     }
@@ -217,14 +249,14 @@ final class VisionMixedLightingState {
         for light in lights { light.isEnabled = enabled }
         guard enabled else { return }
         for (light, color) in zip(lights, [colors.left, colors.right, colors.top, colors.bottom]) {
-            let peak = max(color.x, max(color.y, color.z))
-            let normalized = peak > 0.001 ? color / peak : .zero
-            let tint = UIColor(red: encoded(normalized.x), green: encoded(normalized.y),
-                               blue: encoded(normalized.z), alpha: 1)
-            let wash = max(0, lightBoost - 1)
+            let output = VisionMixedWallLightPolicy.output(color: color, low: level == .low,
+                boost: lightBoost, thermalState: thermalState)
+            light.isEnabled = output.lumens > 0
+            guard output.lumens > 0 else { continue }
+            let tint = UIColor(red: encoded(output.tint.x), green: encoded(output.tint.y),
+                               blue: encoded(output.tint.z), alpha: 1)
             light.components.set(PointLightComponent(color: tint,
-                intensity: (level == .medium ? 900 : 450) * wash * peak,
-                attenuationRadius: 3.5 + wash * 2))
+                intensity: output.lumens, attenuationRadius: output.radius))
         }
     }
 
@@ -247,10 +279,25 @@ final class VisionMixedLightingState {
         screenGlowPalette = .black
     }
 
+    func dismiss(using dismissSpace: @MainActor () async -> Void) async {
+        guard phase != .closed, !dismissalInFlight else { return }
+        dismissalInFlight = true
+        phase = .closing
+        refresh()
+        await dismissSpace()
+        dismissalInFlight = false
+        close()
+    }
+
     func close() {
         entryID = UUID()
+        root.isEnabled = false
         root.removeFromParent()
-        phase = .closed
+        lights.forEach { $0.removeFromParent() }
+        lights.removeAll()
+        // onDisappear can arrive before dismissImmersiveSpace returns. Keep
+        // Arena/re-entry unavailable until that pending dismissal completes.
+        phase = dismissalInFlight ? .closing : .closed
         accessGranted = false
         refresh()
     }
@@ -273,15 +320,16 @@ struct VisionMixedLightingView: View {
         } update: { content in
             state.place(using: content)
         }
+        .preferredSurroundingsEffect(state.dimSurroundings ? .systemDark : nil)
         .onAppear {
-            state.spaceActive = scenePhase == .active
+            state.spaceVisible = scenePhase != .background
             state.reduceMotion = reduceMotion
             state.refresh()
         }
         .onDisappear { state.close() }
-        .onChange(of: scenePhase) { _, phase in state.spaceActive = phase == .active; state.refresh() }
+        .onChange(of: scenePhase) { _, phase in state.spaceVisible = phase != .background; state.refresh() }
         .onChange(of: reduceMotion) { _, value in state.reduceMotion = value; state.refresh() }
-        .onChange(of: state.windowActive) { _, _ in state.refresh() }
+        .onChange(of: state.windowVisible) { _, _ in state.refresh() }
         .onChange(of: state.phase) { _, _ in state.refresh() }
         .onChange(of: state.level) { _, _ in state.refresh() }
         .task {
@@ -291,9 +339,9 @@ struct VisionMixedLightingView: View {
                 state.accessGranted = accessStore.allowsImmersive
                 guard coordinator.activeSessionID != nil, state.windowAttached,
                       state.accessGranted else {
-                    state.phase = .closing
-                    await dismissImmersiveSpace()
-                    state.close()
+                    if state.phase != .closing && state.phase != .closed {
+                        await state.dismiss { await dismissImmersiveSpace() }
+                    }
                     return
                 }
                 state.refresh()
@@ -313,7 +361,7 @@ struct VisionEnvironmentControl: View {
 
     var body: some View {
         Button { showChoices.toggle() } label: {
-            Image(systemName: "cube.transparent").font(.title3.weight(.semibold))
+            Image(systemName: VisionPlayerControlID.immersive.reference.symbol).font(.title3.weight(.semibold))
                 .frame(width: 44, height: 44)
                 .help("Immersive environment")
                 .background(.regularMaterial, in: Circle())
@@ -321,56 +369,75 @@ struct VisionEnvironmentControl: View {
         .buttonStyle(.plain)
         .contentShape(.hoverEffect, Circle())
         .hoverEffect(.highlight)
-        .accessibilityLabel("Immersive environment")
+        .accessibilityLabel(Text(LocalizedStringKey(VisionPlayerControlID.immersive.reference.title)))
         .popover(isPresented: $showChoices) {
-            VStack(alignment: .leading, spacing: 18) {
-                screenGlowControls
-                Text("Immersive environments").font(.headline)
-                if arena.mixedLighting.phase == .open {
-                    Text("Mixed").font(.headline)
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Text("Light boost")
-                            Spacer()
-                            Text("\(Int((arena.mixedLighting.lightBoost * 100).rounded()))%")
-                                .monospacedDigit()
-                        }
-                        Slider(value: Binding(
-                            get: { arena.mixedLighting.lightBoost },
-                            set: { arena.mixedLighting.setLightBoost($0) }),
-                            in: 1...2, step: 0.05)
-                            .accessibilityLabel("Light boost")
-                            .accessibilityValue("\(Int((arena.mixedLighting.lightBoost * 100).rounded())) percent")
-                        Text("100% is screen glow only. Raise this for light on the walls.")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
-                    .disabled(arena.mixedLighting.level == .off)
-                    Button("Exit Mixed") {
-                        Task { @MainActor in
-                            arena.mixedLighting.phase = .closing
-                            arena.mixedLighting.refresh()
-                            await dismissImmersiveSpace()
-                            arena.mixedLighting.close()
-                        }
-                    }
-                    Text("Exit Mixed to choose Glass Arena.").font(.footnote).foregroundStyle(.secondary)
-                } else {
-                    Button("Mixed", systemImage: "rectangle.on.rectangle") { openMixed() }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!VisionMixedLightingState.supported || arena.mixedLighting.phase != .closed)
-                    Text("A full mixed environment, with optional light on the walls.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    if !VisionMixedLightingState.supported {
-                        Text("Mixed wall light requires visionOS 27.").font(.footnote)
-                    }
-                    VisionArenaPreviewLauncher(state: arena, accessStore: accessStore,
-                        coordinator: coordinator, showsTitle: true)
-                        .disabled(arena.mixedLighting.phase != .closed)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    screenGlowControls
+                    Divider()
+                    environmentChoices
+                    if let message = arena.mixedLighting.message { Text(message).font(.footnote) }
                 }
-                if let message = arena.mixedLighting.message { Text(message).font(.footnote) }
+                .padding(24)
             }
-            .padding(24).frame(width: 340)
+            .frame(width: 360, height: 580)
         }
+    }
+
+    @ViewBuilder
+    private var environmentChoices: some View {
+        Text("Immersive environments").font(.headline)
+        if arena.mixedLighting.phase == .open {
+            Text("Mixed").font(.subheadline)
+            Toggle("Dim surroundings", isOn: Binding(
+                get: { arena.mixedLighting.dimSurroundings },
+                set: { arena.mixedLighting.dimSurroundings = $0 }))
+            Text("Dimming applies while Mixed is open.")
+                .font(.footnote).foregroundStyle(.secondary)
+            wallLightControls
+            Button("Exit Mixed") {
+                Task { @MainActor in
+                    await arena.mixedLighting.dismiss { await dismissImmersiveSpace() }
+                }
+            }
+            Text("Exit Mixed to choose Glass Arena.").font(.footnote).foregroundStyle(.secondary)
+        } else {
+            Button("Mixed", systemImage: "rectangle.on.rectangle") { openMixed() }
+                .buttonStyle(.borderedProminent)
+                .disabled(!VisionMixedLightingState.supported || arena.mixedLighting.phase != .closed)
+            Text("Enter Mixed for dimming and optional light on the walls.")
+                .font(.footnote).foregroundStyle(.secondary)
+            if !VisionMixedLightingState.supported {
+                Text("Mixed wall light requires visionOS 27.").font(.footnote)
+            }
+            VisionArenaPreviewLauncher(state: arena, accessStore: accessStore,
+                coordinator: coordinator, showsTitle: true)
+                .disabled(arena.mixedLighting.phase != .closed)
+        }
+    }
+
+    private var wallLightControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Light boost")
+                Spacer()
+                Text("\(Int((arena.mixedLighting.lightBoost * 100).rounded()))%")
+                    .monospacedDigit()
+            }
+            Slider(value: Binding(
+                get: { arena.mixedLighting.lightBoost },
+                set: { arena.mixedLighting.setLightBoost($0) }),
+                in: 1...2, step: 0.05)
+                .accessibilityLabel("Light boost")
+                .accessibilityValue("\(Int((arena.mixedLighting.lightBoost * 100).rounded())) percent")
+            Text("100% is screen glow only. Raise this for light on the walls.")
+                .font(.footnote).foregroundStyle(.secondary)
+            if arena.mixedLighting.thermalState == .serious || arena.mixedLighting.thermalState == .critical {
+                Text("Wall lighting is paused while Vision Pro cools down.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .disabled(arena.mixedLighting.level == .off)
     }
 
     @ViewBuilder
@@ -378,22 +445,14 @@ struct VisionEnvironmentControl: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Ambient glow").font(.headline)
             Picker("Ambient glow", selection: Binding(
-                get: { arena.mixedLighting.level },
-                set: { arena.mixedLighting.selectLevel($0) })) {
-                ForEach(VisionArenaGlow.allCases) { Text($0.rawValue).tag($0) }
+                get: { arena.mixedLighting.glowPreset },
+                set: { arena.mixedLighting.selectGlowPreset($0) })) {
+                ForEach(VisionMixedLightingState.GlowPreset.allCases) {
+                    Text(LocalizedStringKey($0.rawValue)).tag($0)
+                }
             }
             .pickerStyle(.segmented)
-            Text("Spread")
-            Picker("Spread", selection: Binding(
-                get: { arena.mixedLighting.spread },
-                set: { arena.mixedLighting.spread = $0; arena.mixedLighting.refresh() })) {
-                ForEach(VisionMixedLightingState.Spread.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .disabled(arena.mixedLighting.level == .off)
-            Text("Nearby hugs the picture. Standard is a fuller ring. Wide is the broad wash.")
-                .font(.footnote).foregroundStyle(.secondary)
-            Text("Glow around the window in your space. Nearby, Standard, and Wide change how far it reaches.")
+            Text("Medium is the standard glow. Wide extends farther around the picture.")
                 .font(.footnote).foregroundStyle(.secondary)
         }
     }
@@ -424,13 +483,12 @@ struct VisionEnvironmentControl: View {
                 guard state.entryID == entryID else { return }
                 guard state.windowAttached, coordinator.activeSessionID == sessionID,
                       stillAllowed else {
-                    await dismissImmersiveSpace()
-                    state.close()
+                    await state.dismiss { await dismissImmersiveSpace() }
                     return
                 }
                 state.phase = .open
                 state.refresh()
-                showChoices = false
+                // Keep the controls available so dimming is immediately visible.
             case .userCancelled:
                 state.close()
             default:

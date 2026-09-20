@@ -53,3 +53,5 @@
 *.momd/
 *.car
 *.app/
+
+**/__pycache__/

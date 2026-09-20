@@ -23,7 +23,7 @@ import Foundation
             }
         }
         let cinema = VisionArenaScreenPlacement.Preset.cinema.placement.bounded
-        precondition(cinema.tilt == 8 && cinema.scale == 2.04)
+        precondition(cinema.tilt == 9 && cinema.scale == 2.04)
         let rise = cinema.height - 1.15
         precondition(abs(sqrt(cinema.distance * cinema.distance + rise * rise)
             - VisionArenaScreenPlacement.cinemaDistance) < 0.001)

@@ -2,15 +2,19 @@ import ExperienceDomain
 import FarframeCommerceUI
 import FarframeStorefront
 import Foundation
+import InputCore
 import PlayStationRemotePlayUI
 import SwiftUI
 
 struct VisionRemotePlaySettingsView: View {
     @Bindable var coordinator: VisionRemotePlayCoordinator
     @Bindable var accessStore: FarframeAccessStore
+    enum Context { case home, gameplay }
+    var context: Context = .home
     var embedded = false
     var onDone: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
+    @State private var controllerConnection = ControllerConnectionSnapshot(isConnected: false, name: nil)
     @State private var whatsNewIsPresented = false
     @State private var accessIsPresented = false
     @State private var legalIsExpanded = false
@@ -31,6 +35,12 @@ struct VisionRemotePlaySettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if context == .home {
+                    Section {
+                        Button { whatsNewIsPresented = true } label: {
+                            Label("What's New", systemImage: "sparkles")
+                        }
+                    }
                 Section("Farframe Pro") {
                     LabeledContent("Status", value: accessStore.statusTitle)
                     Text(accessStore.statusDetail)
@@ -64,6 +74,8 @@ struct VisionRemotePlaySettingsView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
+                }
+
                 }
 
                 Section(StreamPlayStyle.question) {
@@ -108,8 +120,10 @@ struct VisionRemotePlaySettingsView: View {
                     )
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    Text("Quality changes apply after Disconnect Only, then Connect. No app restart or pairing is needed.")
+                        .font(.footnote).foregroundStyle(.secondary)
                     Toggle("Smooth motion", isOn: $coordinator.smoothMotionEnabled)
-                    Text("Holds a few frames so a busy Wi-Fi network does not stutter. Costs about 50 ms of input lag, and up to about 200 ms while the network is rough. Turn off for the fastest response.")
+                    Text("Applies immediately. Buffers a few frames to reduce stutter, adding some input delay. Turn off for the fastest response.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     if FarframeReleaseFeatures.advancedMedia {
@@ -172,22 +186,18 @@ struct VisionRemotePlaySettingsView: View {
                 }
 
                 Section("Controller") {
-                    let connection = coordinator.controllerSource.connectionSnapshot()
+                    let connection = controllerConnection
                     LabeledContent("Status", value: connection.isConnected ? "Connected" : "Not Connected")
                     if let name = connection.name {
                         LabeledContent("Controller", value: name)
                     }
-                    Text("DualSense labels use their standard PS5 mapping: right Options, left Create.")
+                    Text("To turn off your DualSense, hold its physical PS button until the lights turn off. Ending Remote Play does not turn off the controller.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
 
+                if context == .home {
                 Section("About") {
-                    Button {
-                        whatsNewIsPresented = true
-                    } label: {
-                        Label("What's New", systemImage: "sparkles")
-                    }
                     LabeledContent("Version", value: appVersion)
                     Text("\(appDisplayName) for Apple Vision Pro")
                         .font(.footnote)
@@ -223,8 +233,9 @@ struct VisionRemotePlaySettingsView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+                }
             }
-            .navigationTitle("Settings")
+            .navigationTitle(context == .home ? "Settings" : "Video Settings")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
@@ -234,6 +245,12 @@ struct VisionRemotePlaySettingsView: View {
             }
         }
         .frame(minWidth: embedded ? 360 : 520, minHeight: embedded ? 440 : 520)
+        .task {
+            for await connection in coordinator.controllerSource.connectionUpdates() {
+                guard !Task.isCancelled else { return }
+                controllerConnection = connection
+            }
+        }
         .sheet(isPresented: $whatsNewIsPresented) {
             FarframeWhatsNewView()
         }
